@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EasyPublish</title>
+    <link rel="stylesheet" href="style.css" />
+
+
+    <script>
+        fetch('view/items?containerId=0x139b35c2c3e23bfdfbbde3576c71c7af50a3e75cb708743237e17dd1ad2901c8&type=data_item')
+          .then(r => r.text())
+          .then(html => {
+            const container = document.getElementById('items');
+            container.innerHTML = html;
+
+            // ✅ initialize collapsibles AFTER injection
+            initCollapsibles(container);
+          });
+
+        function initCollapsibles(root) {
+          root.querySelectorAll('.bp-items-root .collapsible').forEach(cell => {
+            cell.addEventListener('click', () => {
+              cell.classList.toggle('expanded');
+            });
+          });
+        }  </script>
+    <script>
+        let connectedWallet = null;
+        let account = null;
+
+        async function connectWallet() {
+            if (!window.getWallets) {
+                alert("No IOTA wallets detected. Make sure you have a compatible wallet installed.");
+                return;
+            }
+
+            try {
+                const wallets = await window.getWallets()?.get?.() || [];
+                if (wallets.length === 0) {
+                    alert("No wallets found.");
+                    return;
+                }
+
+                connectedWallet = wallets[0]; // pick the first wallet
+                account = await connectedWallet.features['standard:connect'].connect();
+
+                document.getElementById('walletAddress').innerText = account.address;
+                console.log("Connected wallet:", account);
+            } catch (err) {
+                console.error("Wallet connection failed:", err);
+                alert("Failed to connect wallet: " + err.message);
+            }
+        }
+
+        async function loadItems() {
+            if (!account) {
+                alert("Please connect a wallet first!");
+                return;
+            }
+
+            // Example container ID and type
+            const containerId = '0x139b35c2c3e23bfdfbbde3576c71c7af50a3e75cb708743237e17dd1ad2901c8';
+            const type = 'data_item';
+
+            try {
+                const response = await fetch(`/view/items?containerId=${containerId}&type=${type}`);
+                const html = await response.text();
+                document.getElementById('items').innerHTML = html;
+
+                // Apply collapsible logic
+                document.querySelectorAll('.collapsible').forEach(cell => {
+                    cell.addEventListener('click', () => {
+                        cell.classList.toggle('expanded');
+                    });
+                });
+            } catch (err) {
+                console.error("Failed to load items:", err);
+                document.getElementById('items').innerText = "Error loading items.";
+            }
+        }
+    </script>
+
+</head>
+<body>
+
+
+<header class="navbar">
+    <div class="logo">EasyPublish</div>
+    <nav>
+        <a href="#features">Features</a>
+        <a href="#api">API</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#cta" class="btn">Get Started</a>
+    </nav>
+</header>
+
+
+<section class="hero">
+    <h1>Composable Containers on-chain</h1>
+    <p>Publish, link, and index structured data containers using MoveVM & IOTA.</p>
+    <div class="hero-actions">
+        <a class="btn secondary" href="/view/items">Explore Data</a>
+        <a class="btn secondary" onclick="connectWallet()">Connect Wallet</a>
+        <p>Wallet address: <span id="walletAddress">Not connected</span></p>
+
+        <a class="btn secondary" href="/api/items">API Docs</a>
+    </div>
+</section>
+
+
+<section id="features" class="features">
+    <h2>Why EasyPublish?</h2>
+    <div class="feature-grid">
+        <div class="feature">
+            <h3>🔗 Linked Containers</h3>
+            <p>Attach child containers with ordered indices and immutable history.</p>
+        </div>
+        <div class="feature">
+            <h3>📦 On-chain Indexing</h3>
+            <p>Efficient traversal without recursion or missing segments.</p>
+        </div>
+        <div class="feature">
+            <h3>⚡ Event Driven</h3>
+            <p>Consume MoveVM events for real-time off-chain indexing.</p>
+        </div>
+        <div class="feature">
+            <h3>🛡 Ownership Model</h3>
+            <p>Multi-owner containers with safe removal and permissions.</p>
+        </div>
+        <div id="items"></div>
+    </div>
+</section>
+
+
+<section id="api" class="api">
+    <h2>Universal Output</h2>
+    <p>Use the same data via REST, Thymeleaf, or embed anywhere.</p>
+    <pre class="code">
+GET /api/items?containerId=0x...&type=data_item
+
+
+GET /view/items?containerId=0x...&type=data_item
+</pre>
+</section>
+
+
+<section id="architecture" class="architecture">
+    <h2>Architecture</h2>
+    <ul>
+        <li>MoveVM smart contracts (IOTA)</li>
+        <li>Event indexing (off-chain)</li>
+        <li>Spring Boot backend</li>
+        <li>Universal HTML output</li>
+    </ul>
+</section>
+
+
+<section id="cta" class="cta">
+    <h2>Build on structured on-chain data</h2>
+    <p>Designed for scale, safety, and composability.</p>
+    <a href="/view/items" class="btn primary">Launch App</a>
+</section>
+
+
+<footer class="footer">
+    <p>© 2026 EasyPublish · Built on IOTA</p>
+</footer>
+
+
+</body>
+</html>

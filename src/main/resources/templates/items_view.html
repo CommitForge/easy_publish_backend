@@ -1,0 +1,110 @@
+<div class="bp-items-root">
+
+    <style>
+        /* Scoped styles — do NOT leak into host page */
+        .bp-items-root {
+        }
+
+        .bp-items-root h1 {
+            margin-bottom: 15px;
+        }
+
+        .bp-items-root table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .bp-items-root th,
+        .bp-items-root td {
+            padding: 10px;
+            border: 1px solid #ddd;
+            text-align: left;
+            vertical-align: top;
+            word-wrap: break-word;
+        }
+
+        .bp-items-root th {
+
+        }
+
+        .bp-items-root tr:nth-child(even) {
+
+        }
+
+        /* Collapsible cells */
+        .bp-items-root .collapsible {
+            max-height: 50px;
+            overflow: hidden;
+            cursor: pointer;
+            position: relative;
+            padding-right: 20px;
+        }
+
+        .bp-items-root .collapsible::after {
+            content: '▼';
+            position: absolute;
+            right: 5px;
+            bottom: 5px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        .bp-items-root .collapsible.expanded {
+            max-height: none;
+        }
+
+        .bp-items-root .collapsible.expanded::after {
+            content: '▲';
+        }
+
+        .bp-items-root .error {
+            color: red;
+            margin-bottom: 10px;
+        }
+    </style>
+
+    <h1>
+        Items in Container:
+        <span th:text="${containerId}"></span>
+    </h1>
+
+    <div th:if="${error}" class="error">
+        Error: <span th:text="${error}"></span>
+    </div>
+
+    <table th:if="${items}">
+        <thead>
+        <tr>
+            <th>Object ID</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Content</th>
+            <th>External ID</th>
+            <th>Creator</th>
+            <th>Data Type ID</th>
+            <th>Tag Index</th>
+            <th>Previous</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="item : ${items}">
+            <td><div class="collapsible" th:text="${item.object_id}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.name}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.description}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.content}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.external_id}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.creator}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.data_type_id}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.tag_index}"></div></td>
+            <td><div class="collapsible" th:text="${item.fields.prev} ?: '-'"></div></td>
+        </tr>
+        </tbody>
+    </table>
+
+    <div th:if="${items.size() == 0}">
+        <p>No items found in this container.</p>
+    </div>
+
+
+</div>

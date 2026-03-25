@@ -1,0 +1,27 @@
+[
+  {
+    "name": "com.easypublish.parsed.EasyPublish",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.easypublish.parsed.PublishWrapper",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.easypublish.parsed.Publish",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.easypublish.parsed.Cars",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.easypublish.parsed.CarMaintenance",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  }
+]

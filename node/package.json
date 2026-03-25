@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "devDependencies": {
+    "@iota/iota-sdk": "^1.10.0"
+  }
+}

@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.10-SNAPSHOT</version>
+        <relativePath/>
+    </parent>
+    <groupId>com</groupId>
+    <artifactId>easypublish</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>easypublish</name>
+    <description>Demo project for Spring Boot</description>
+    <url/>
+    <licenses>
+        <license/>
+    </licenses>
+    <developers>
+        <developer/>
+    </developers>
+    <scm>
+        <connection/>
+        <developerConnection/>
+        <tag/>
+        <url/>
+    </scm>
+    <properties>
+        <maven.compiler.source>22</maven.compiler.source>
+        <maven.compiler.target>22</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+   </properties>
+    <dependencies>
+        <!-- Web + REST -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Thymeleaf templates -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+
+        <!-- JSON support -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- DevTools -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Spring Boot Starter Data JPA -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- PostgreSQL JDBC Driver -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Optional: Lombok for getters/setters/constructors (nice for entities) -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+
+        </dependency>
+        <!-- Spring Boot Starter WebSocket -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
+        <!-- Spring Messaging (for STOMP support) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-messaging</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <version>RELEASE</version>
+            <scope>compile</scope>
+        </dependency>
+
+
+        <!-- Source: https://mvnrepository.com/artifact/com.openhtmltopdf/openhtmltopdf-pdfbox -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.0.10</version>
+            <scope>compile</scope>
+        </dependency>
+    </dependencies>
+
+
+    <repositories>
+        <repository>
+            <id>spring-snapshots</id>
+            <name>Spring Snapshots</name>
+            <url>https://repo.spring.io/snapshot</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>spring-snapshots</id>
+            <name>Spring Snapshots</name>
+            <url>https://repo.spring.io/snapshot</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+        </pluginRepository>
+    </pluginRepositories>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <mainClass>com.easypublish.EasyPublishApplication</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+<profiles>
+    <profile>
+        <id>native</id>
+        <build>
+
+            <resources>
+                <resource>
+                    <directory>src/main/resources</directory>
+                    <filtering>true</filtering>
+                </resource>
+                <resource>
+                    <directory>src/main/jte</directory>
+                    <includes>
+                        <include>**/*.jte</include>
+                    </includes>
+                </resource>
+            </resources>
+            <pluginManagement>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.14.0</version>
+                        <configuration>
+                            <source>${maven.compiler.source}</source>
+                            <target>${maven.compiler.target}</target>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <id>remove-legacy-assembly-jar</id>
+                            <phase>validate</phase>
+                            <goals>
+                                <goal>run</goal>
+                            </goals>
+                            <configuration>
+                                <target>
+                                    <delete failonerror="false">
+                                        <fileset dir="${project.build.directory}" includes="*-jar-with-dependencies.jar"/>
+                                    </delete>
+                                </target>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>
+                            --add-opens java.base/java.lang=ALL-UNNAMED
+                        </argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+                <plugin>
+                    <groupId>org.graalvm.buildtools</groupId>
+                    <artifactId>native-maven-plugin</artifactId>
+                    <version>0.10.6</version>
+                    <extensions>true</extensions>
+                    <executions>
+                        <execution>
+                            <id>build-native</id>
+                            <goals>
+                                <goal>build</goal>
+                            </goals>
+                            <phase>package</phase>
+                        </execution>
+                        <execution>
+                            <id>test-native</id>
+                            <goals>
+                                <goal>test</goal>
+                            </goals>
+                            <phase>test</phase>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <classesDirectory>${project.build.outputDirectory}</classesDirectory>
+                        <imageName>native.img</imageName>
+                        <mainClass>com.easypublish.EasyPublishApplication</mainClass>
+                        <buildArgs>
+                            <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                            <buildArg>--no-fallback</buildArg>
+                            <buildArg>--initialize-at-run-time=sun.awt.X11.XWM</buildArg>
+                        </buildArgs>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.hibernate.orm.tooling</groupId>
+                    <artifactId>hibernate-enhance-maven-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <configuration>
+                                <failOnError>true</failOnError>
+                                <enableLazyInitialization>true</enableLazyInitialization>
+                                <enableDirtyTracking>true</enableDirtyTracking>
+                                <enableAssociationManagement>true</enableAssociationManagement>
+                            </configuration>
+                            <goals>
+                                <goal>enhance</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+    <profile>
+        <id>native-fast</id>
+        <properties>
+            <skipTests>true</skipTests>
+        </properties>
+        <build>
+            <resources>
+                <resource>
+                    <directory>src/main/resources</directory>
+                    <filtering>true</filtering>
+                </resource>
+                <resource>
+                    <directory>src/main/jte</directory>
+                    <includes>
+                        <include>**/*.jte</include>
+                    </includes>
+                </resource>
+            </resources>
+            <pluginManagement>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <version>3.14.0</version>
+                        <configuration>
+                            <source>${maven.compiler.source}</source>
+                            <target>${maven.compiler.target}</target>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-antrun-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <id>remove-legacy-assembly-jar-fast</id>
+                            <phase>validate</phase>
+                            <goals>
+                                <goal>run</goal>
+                            </goals>
+                            <configuration>
+                                <target>
+                                    <delete failonerror="false">
+                                        <fileset dir="${project.build.directory}" includes="*-jar-with-dependencies.jar"/>
+                                    </delete>
+                                </target>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <skipTests>true</skipTests>
+                        <argLine>
+                            --add-opens java.base/java.lang=ALL-UNNAMED
+                        </argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+                <plugin>
+                    <groupId>org.graalvm.buildtools</groupId>
+                    <artifactId>native-maven-plugin</artifactId>
+                    <version>0.10.6</version>
+                    <extensions>true</extensions>
+                    <executions>
+                        <execution>
+                            <id>build-native-fast</id>
+                            <goals>
+                                <goal>build</goal>
+                            </goals>
+                            <phase>package</phase>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <classesDirectory>${project.build.outputDirectory}</classesDirectory>
+                        <imageName>native-fast.img</imageName>
+                        <mainClass>com.easypublish.EasyPublishApplication</mainClass>
+                        <buildArgs>
+                            <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                            <buildArg>--no-fallback</buildArg>
+                            <buildArg>-Ob</buildArg>
+                            <buildArg>--initialize-at-run-time=sun.awt.X11.XWM</buildArg>
+                        </buildArgs>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+    <profile>
+        <id>profile-old</id>
+        <build>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+
+                </plugin>
+            </plugins>
+            <resources>
+                <resource>
+                    <directory>src/main/resources</directory>
+                </resource>
+            </resources>
+        </build>
+    </profile>
+</profiles>
+</project>

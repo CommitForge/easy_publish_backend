@@ -1,0 +1,194 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <meta charset="UTF-8"/>
+    <title>Car Maintenance Report</title>
+
+    <style>
+
+        body{
+            font-family: Arial, Helvetica, sans-serif;
+            font-size:12px;
+            color:#333;
+            margin:20px;
+        }
+
+        /* ---------------------------
+           HEADER
+        --------------------------- */
+
+        .header-table{
+            width:100%;
+            border-collapse:collapse;
+            margin-bottom:12px;
+        }
+
+        .header-left{
+            text-align:left;
+            vertical-align:top;
+        }
+
+        .header-right{
+            text-align:right;
+            vertical-align:top;
+            width:120px;
+        }
+
+        .header-right img{
+            max-width:100px;
+        }
+
+        h1{
+            font-size:20px;
+            margin:0;
+        }
+
+        .meta{
+            font-size:11px;
+            color:#666;
+            margin-top:4px;
+        }
+
+        /* separator line */
+
+        .header-table{
+            border-bottom:2px solid #333;
+            padding-bottom:6px;
+        }
+
+        /* ---------------------------
+           INFO
+        --------------------------- */
+
+        .info{
+            margin-top:12px;
+            margin-bottom:10px;
+            font-size:12px;
+        }
+
+        .info h3{
+            font-size:13px;
+            margin-bottom:4px;
+        }
+
+        /* ---------------------------
+           TABLE
+        --------------------------- */
+
+        table{
+            width:100%;
+            border-collapse:collapse;
+        }
+
+        th{
+            text-align:left;
+            border-bottom:2px solid #444;
+            padding:6px;
+            font-size:12px;
+        }
+
+        td{
+            border-bottom:1px solid #ddd;
+            padding:6px;
+            font-size:11px;
+        }
+
+        tbody tr:nth-child(even){
+            background:#f8f8f8;
+        }
+
+        /* highlight rows with cost */
+
+        .highlight{
+            background:#fff4f4;
+        }
+
+        /* ---------------------------
+           PDF settings
+        --------------------------- */
+
+        @page {
+            size: A4 landscape;
+            margin: 20mm 15mm;
+
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size:10px;
+                color:#777;
+            }
+        }
+
+        thead{
+            display:table-header-group;
+        }
+
+        tr{
+            page-break-inside:avoid;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<table class="header-table">
+    <tr>
+        <td class="header-left">
+            <h1>Car Maintenance Report</h1>
+            <div class="meta">
+                <div th:text="'Generated: ' + ${generatedAt}"></div>
+                <div>
+                    <span th:text="${idLabel}"></span>:
+                    <span th:text="${reportId}"></span>
+                </div>
+            </div>
+        </td>
+
+        <td class="header-right">
+            <img th:if="${logoPath != null}"
+                 th:src="${logoPath}"
+                 alt="Logo"/>
+        </td>
+    </tr>
+</table>
+
+<table>
+
+    <thead>
+    <tr>
+        <th>Date</th>
+        <th>Distance</th>
+        <th>Service</th>
+        <th>Parts</th>
+        <th>Cost</th>
+        <th>Performed By</th>
+        <th>Note</th>
+    </tr>
+    </thead>
+
+    <tbody>
+
+    <tr th:each="m : ${maintenances}"
+        th:classappend="${m.cost != null} ? 'highlight' : ''">
+
+        <td th:text="${m.date != null ? m.date : '-'}"></td>
+        <td th:text="${m.distance != null ? m.distance : '-'}"></td>
+        <td th:text="${m.service != null ? m.service : '-'}"></td>
+        <td th:text="${m.parts != null ? m.parts : '-'}"></td>
+        <td th:text="${m.cost != null ? m.cost : '-'}"></td>
+        <td th:text="${m.performedBy != null ? m.performedBy : '-'}"></td>
+        <td th:text="${m.note != null ? m.note : '-'}"></td>
+
+    </tr>
+
+    </tbody>
+
+</table>
+
+</body>
+</html>
