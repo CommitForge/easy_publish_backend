@@ -205,7 +205,7 @@ public class IotaDataSync {
 
             case "container":
                 updateOrCreateContainer(objectData.toString());
-                System.out.println("[SYNC] container synced: " + objectId);
+                System.out.println("[ONCHAIN-SYNC] container synced: " + objectId);
                 break;
 
             case "data_type": {
@@ -216,7 +216,7 @@ public class IotaDataSync {
                     return;
                 }
                 updateOrCreateDataType(objectData.toString(), containerId);
-                System.out.println("[SYNC] data_type synced → container " + containerId);
+                System.out.println("[ONCHAIN-SYNC] data_type synced → container " + containerId);
                 break;
             }
 
@@ -228,7 +228,7 @@ public class IotaDataSync {
                     return;
                 }
                 updateOrCreateDataItem(objectData, containerId, dataTypeId);
-                System.out.println("[SYNC] data_item synced → container " + containerId);
+                System.out.println("[ONCHAIN-SYNC] data_item synced → container " + containerId);
                 break;
             }
 
@@ -239,7 +239,7 @@ public class IotaDataSync {
                     return;
                 }
                 updateOrCreateOwner(objectData.toString(), containerId);
-                System.out.println("[SYNC] owner synced → container " + containerId);
+                System.out.println("[ONCHAIN-SYNC] owner synced → container " + containerId);
                 break;
             }
 
@@ -247,7 +247,7 @@ public class IotaDataSync {
                 String containerId = getIdOrNull(fields, "container_id");
                 if (containerId == null || containerId.isBlank()) containerId = objectId; // fallback
                 updateOrCreateOwnerAudit(objectData.toString(), containerId);
-                System.out.println("[SYNC] owner_audit synced → container " + containerId);
+                System.out.println("[ONCHAIN-SYNC] owner_audit synced → container " + containerId);
                 break;
             }
 
@@ -256,7 +256,7 @@ public class IotaDataSync {
                 String dataItemId = getIdOrNull(fields, "data_item_id");
                 if (containerId == null || containerId.isBlank()) containerId = objectId; // fallback
                 DataItemVerification dataItemVerification = updateOrCreateDataItemVerification(objectData.toString(), containerId, dataItemId);
-                System.out.println("[SYNC] data_item_verification synced → container " + containerId);
+                System.out.println("[ONCHAIN-SYNC] data_item_verification synced → container " + containerId);
                 // also update data item that was verified
                 JsonNode objectData2 = fetchObjectData(dataItemVerification.getDataItemId(), "data_item");
                 JsonNode fields2 = objectData2.path("fields");
@@ -273,7 +273,7 @@ public class IotaDataSync {
                     return;
                 }
                 updateOrCreateChildLink(objectData.toString(), parentId);
-                System.out.println("[SYNC] child synced → parent " + parentId);
+                System.out.println("[ONCHAIN-SYNC] child synced → parent " + parentId);
                 break;
             }
 
@@ -421,7 +421,7 @@ public class IotaDataSync {
             try {
                 // Use objectId so we can associate parsed targets with this DataItem
                 easyPublishParser.parseAndSave(entity.getContent(), saved.getId(), false, false, false);
-                System.out.println("[SYNC] EasyPublish targets stored for DataItem " + saved.getId());
+                System.out.println("[OFFCHAIN-SYNC] EasyPublish targets stored for DataItem " + saved.getId());
             } catch (Exception e) {
                 System.err.println("[WARN] Failed to parse EasyPublish content for DataItem " + saved.getId());
                 e.printStackTrace();
@@ -652,12 +652,12 @@ public class IotaDataSync {
                 easyPublishOffchainIndexService.reindexAllDataItems();
 
         if (summary.skipped()) {
-            System.out.println("[SYNC] EasyPublish offchain index skipped: " + summary.message());
+            System.out.println("[OFFCHAIN-SYNC] EasyPublish offchain index skipped: " + summary.message());
             return;
         }
 
         System.out.println(
-                "[SYNC] EasyPublish offchain index refreshed. dataItems=" + summary.scannedDataItems()
+                "[OFFCHAIN-SYNC] EasyPublish offchain index refreshed. dataItems=" + summary.scannedDataItems()
                         + ", followActions=" + summary.followActions()
                         + ", activeFollows=" + summary.activeFollows()
                         + ", revisions=" + summary.revisionRows()
@@ -869,7 +869,7 @@ public class IotaDataSync {
             try {
                 // Use objectId so we can associate parsed targets with this DataItem
                 easyPublishParser.parseAndSave(div.getContent(), div.getId(), true, false, false);
-                System.out.println("[SYNC] EasyPublish targets stored for DataItemVerification " + div.getId());
+                System.out.println("[OFFCHAIN-SYNC] EasyPublish targets stored for DataItemVerification " + div.getId());
             } catch (Exception e) {
                 System.err.println("[WARN] Failed to parse EasyPublish content for DataItemVerification " + div.getId());
                 e.printStackTrace();

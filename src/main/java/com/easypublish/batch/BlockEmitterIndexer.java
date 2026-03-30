@@ -242,7 +242,7 @@ public class BlockEmitterIndexer {
             try {
                 // Use objectId so we can associate parsed targets with this DataItem
                 easyPublishParser.parseAndSave(c.getContent(), c.getId(), false, true, false);
-                System.out.println("[SYNC] EasyPublish targets stored for Container " + c.getId());
+                System.out.println("[OFFCHAIN-SYNC] EasyPublish targets stored for Container " + c.getId());
             } catch (Exception e) {
                 System.err.println("[WARN] Failed to parse EasyPublish content for Container " + c.getId());
                 e.printStackTrace();
@@ -393,7 +393,7 @@ public class BlockEmitterIndexer {
             try {
                 // Use objectId so we can associate parsed targets with this DataItem
                 easyPublishParser.parseAndSave(dt.getContent(), dt.getId(), false, false, true);
-                System.out.println("[SYNC] EasyPublish targets stored for DataType " + dt.getId());
+                System.out.println("[OFFCHAIN-SYNC] EasyPublish targets stored for DataType " + dt.getId());
             } catch (Exception e) {
                 System.err.println("[WARN] Failed to parse EasyPublish content for DataType " + dt.getId());
                 e.printStackTrace();
