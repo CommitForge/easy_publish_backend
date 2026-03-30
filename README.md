@@ -180,7 +180,6 @@ All paths below are relative to `/izipublish`.
 | `GET` | `/api/user/{address}` | Load user record |
 | `POST` | `/api/user/{address}/update` | Create/update user timestamps |
 | `GET` | `/api/sync/{chainObjectId}` | Sync status payload |
-| `POST` | `/update-chain/sync` | Trigger recursive chain sync |
 
 ### Reports
 
@@ -220,14 +219,6 @@ Frontend handoff guide:
 - `docs/frontend-items-integration.md`
 
 ```bash
-curl -X POST "http://localhost:8084/izipublish/update-chain/sync" \
-  --data-urlencode "containerChainId=0x..." \
-  --data-urlencode "updateChainId=0x..." \
-  --data-urlencode "dataItemChainId=0x..." \
-  --data-urlencode "dataItemVerificationChainId=0x..."
-```
-
-```bash
 curl -X POST "http://localhost:8084/izipublish/api/report/car?dataTypeId=0x..." \
   -o car-report.pdf
 ```
@@ -252,21 +243,21 @@ Example STOMP subscription destination:
 
 ```mermaid
 sequenceDiagram
-    participant Client
+    participant Scheduler as Spring Scheduler
     participant API as Spring API
     participant Sync as IotaDataSync
     participant Node as Node Scripts
     participant IOTA as IOTA Network
     participant DB as PostgreSQL
 
-    Client->>API: POST /update-chain/sync
+    Scheduler->>API: scheduledOnchainSync()
     API->>Sync: syncUpdateChainRecords(...)
     Sync->>Node: getObjectById/getContainerItems scripts
     Node->>IOTA: fetch on-chain objects
     IOTA-->>Node: object data
     Node-->>Sync: normalized JSON
     Sync->>DB: upsert entities + progress
-    API-->>Client: Sync started
+    API-->>Scheduler: run complete
 ```
 
 ---
@@ -310,11 +301,28 @@ The following values were extracted from hardcoded code paths into `application.
 - `app.node.binary`
 - `app.node.items-script`
 - `app.node.directory`
+- `app.iota.network`
+- `app.iota.rpc-urls`
+- `app.iota.rpc-attempts-per-url`
+- `app.iota.rpc-retry-delay-ms`
+- `app.iota.node-fetch-max-attempts`
+- `app.iota.node-fetch-retry-delay-ms`
+- `app.onchain-sync.enabled`
+- `app.onchain-sync.initial-delay-ms`
+- `app.onchain-sync.fixed-delay-ms`
+- `app.onchain-sync.smart-contract-id`
+- `app.onchain-sync.container-chain-id`
+- `app.onchain-sync.update-chain-id`
+- `app.onchain-sync.data-item-chain-id`
+- `app.onchain-sync.data-item-verification-chain-id`
 - `app.websocket.broker-prefix`
 - `app.websocket.app-prefix`
 - `app.websocket.endpoint`
 - `app.websocket.sync-topic`
 - `app.sync.status-push-rate-ms`
+- `app.easy-publish.offchain-index-enabled`
+- `app.easy-publish.offchain-index-ms`
+- `app.easy-publish.offchain-index-initial-delay-ms`
 - `app.follow.max-per-user`
 - `app.domain.default-public`
 
@@ -323,7 +331,7 @@ The following values were extracted from hardcoded code paths into `application.
 ## Notes and Known Constraints
 
 - No Maven wrapper is currently committed (`mvnw` is missing), so Maven must be installed locally.
-- Node scripts are mixed between `testnet` and `mainnet` URLs depending on script.
+- Node scripts read network/RPC config from `app.iota.*` via Java process env propagation.
 - Frontend code in this workspace is currently in:
   - `react/iota-dapp_backup_20260323_224441`
 - For Docker/production, use Spring Boot jar:
@@ -341,6 +349,20 @@ The following values were extracted from hardcoded code paths into `application.
 ```bash
 cd node
 node getObjectById.js 0xYOUR_OBJECT_ID
+```
+
+- If logs show `Node process failed ... fetch failed`, configure explicit RPC URLs:
+
+```properties
+app.iota.network=testnet
+app.iota.rpc-urls=https://api.testnet.iota.cafe
+```
+
+- You can also increase retry behavior for unstable network links:
+
+```properties
+app.iota.rpc-attempts-per-url=3
+app.iota.node-fetch-max-attempts=4
 ```
 
 ### CORS issues in browser

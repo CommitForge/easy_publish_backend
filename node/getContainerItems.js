@@ -1,27 +1,61 @@
 #!/usr/bin/env node
 
-import { IotaClient, getFullnodeUrl } from '@iota/iota-sdk/client';
 import { fileURLToPath } from 'url';
-import { createObjectFetcher, flattenStructFields, normalizeId } from './objectUtils.js';
+import {
+  createRpcClients,
+  fetchObjectByIdWithRetry,
+  flattenStructFields,
+  isLikelyNotFoundError,
+  normalizeId,
+} from './objectUtils.js';
 
 // Node ESM __filename
 const __filename = fileURLToPath(import.meta.url);
 
-const client = new IotaClient({ url: getFullnodeUrl('testnet') });
-const fetchObject = createObjectFetcher(client, {
-  showType: false,
-  throwIfMissing: false,
-});
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+const network = (process.env.IOTA_NETWORK || 'testnet').trim() || 'testnet';
+const attemptsPerUrl = parsePositiveInt(
+  process.env.IOTA_RPC_ATTEMPTS_PER_URL || process.env.IOTA_RPC_MAX_ATTEMPTS_PER_URL || '2',
+  2
+);
+const retryDelayMs = parseNonNegativeInt(process.env.IOTA_RPC_RETRY_DELAY_MS || '400', 400);
+const rpcClients = createRpcClients({ network });
 
 // Fetch a single object by ID
 async function getObject(id) {
-  if (!id) return null;
+  const objectId = normalizeId(id);
+  if (!objectId) return null;
   try {
-    const objectData = await fetchObject(id);
+    const objectData = await fetchObjectByIdWithRetry(
+      rpcClients,
+      objectId,
+      {
+        showType: false,
+        showContent: true,
+        showOwner: false,
+        showDisplay: false,
+        throwIfMissing: true,
+      },
+      {
+        attemptsPerUrl,
+        retryDelayMs,
+      }
+    );
     return objectData?.fields ?? null;
   } catch (err) {
-    console.error(`⚠ Error fetching object ${id}:`, err.message || err);
-    return null;
+    if (isLikelyNotFoundError(err)) {
+      return null;
+    }
+    throw err;
   }
 }
 
@@ -32,7 +66,7 @@ export async function getContainerItems(containerId, type, maxItems = Infinity) 
   const containerFields = await getObject(containerId);
 
   if (!containerFields) {
-    console.error(`⚠ Container ${containerId} not found`);
+    console.error(`⚠ Container ${containerId} not found on network=${network}`);
     return [];
   }
 
@@ -174,10 +208,15 @@ if (process.argv[1] === __filename) {
       console.log(JSON.stringify(data, null, 2));
 
       if (data.count === 0) {
-        console.error(`⚠ No items found for container ${containerId}. Verify container ID or network.`);
+        console.error(
+          `⚠ No items found for container ${containerId}. Verify container ID/network (network=${network}).`
+        );
       }
     } catch (err) {
       console.error('⚠ Fatal error fetching container data:', err.message || err);
+      if (Array.isArray(err?.attempts) && err.attempts.length > 0) {
+        console.error('⚠ RPC attempts:', JSON.stringify(err.attempts));
+      }
       process.exit(1);
     }
   })();

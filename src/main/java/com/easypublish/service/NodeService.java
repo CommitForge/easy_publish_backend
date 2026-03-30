@@ -20,6 +20,7 @@ import com.easypublish.repositories.OffchainDataItemRevisionRepository;
 import com.easypublish.repositories.PublishTargetRepository;
 import com.easypublish.repositories.UserDataRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -92,6 +93,10 @@ public class NodeService {
     private final String nodeBinary;
     private final String nodeScript;
     private final File nodeDirectory;
+    private final String iotaNetwork;
+    private final String iotaRpcUrls;
+    private final int iotaRpcAttemptsPerUrl;
+    private final int iotaRpcRetryDelayMs;
 
     public NodeService(
             UserDataRepository userRepository,
@@ -105,7 +110,11 @@ public class NodeService {
             NodeQueryService nodeQueryService,
             @Value("${app.node.binary:node}") String nodeBinary,
             @Value("${app.node.items-script:getItems.js}") String nodeScript,
-            @Value("${app.node.directory:./node}") String nodeDirectory
+            @Value("${app.node.directory:./node}") String nodeDirectory,
+            @Value("${app.iota.network:testnet}") String iotaNetwork,
+            @Value("${app.iota.rpc-urls:}") String iotaRpcUrls,
+            @Value("${app.iota.rpc-attempts-per-url:2}") int iotaRpcAttemptsPerUrl,
+            @Value("${app.iota.rpc-retry-delay-ms:400}") int iotaRpcRetryDelayMs
     ) {
         this.userRepository = userRepository;
         this.mapper = mapper;
@@ -119,6 +128,10 @@ public class NodeService {
         this.nodeBinary = nodeBinary;
         this.nodeScript = nodeScript;
         this.nodeDirectory = new File(nodeDirectory);
+        this.iotaNetwork = iotaNetwork;
+        this.iotaRpcUrls = iotaRpcUrls;
+        this.iotaRpcAttemptsPerUrl = iotaRpcAttemptsPerUrl;
+        this.iotaRpcRetryDelayMs = iotaRpcRetryDelayMs;
     }
 
     /**
@@ -171,18 +184,40 @@ public class NodeService {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(nodeDirectory);
         pb.redirectErrorStream(true);
+        if (normalizeBlank(iotaNetwork) != null) {
+            pb.environment().put("IOTA_NETWORK", iotaNetwork.trim());
+        }
+        if (normalizeBlank(iotaRpcUrls) != null) {
+            pb.environment().put("IOTA_RPC_URLS", iotaRpcUrls.trim());
+        }
+        if (iotaRpcAttemptsPerUrl > 0) {
+            pb.environment().put("IOTA_RPC_ATTEMPTS_PER_URL", String.valueOf(iotaRpcAttemptsPerUrl));
+        }
+        if (iotaRpcRetryDelayMs >= 0) {
+            pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+        }
 
         Process process = pb.start();
         String output = collectProcessOutput(process);
         int exitCode = process.waitFor();
 
         if (exitCode != 0) {
-            log.error("Node process failed:\n{}", output);
-            throw new RuntimeException("Node process failed");
+            log.error("Node process failed (exitCode={}):\n{}", exitCode, output);
+            throw new RuntimeException("Node process failed, exit code: " + exitCode);
         }
 
         try {
-            return mapper.readValue(output, new TypeReference<List<Map<String, Object>>>() {});
+            JsonNode root = mapper.readTree(output);
+            JsonNode itemsNode = root;
+            if (!root.isArray()) {
+                itemsNode = root.path("items");
+            }
+
+            if (!itemsNode.isArray()) {
+                throw new IllegalStateException("Expected JSON array or object with array field 'items'");
+            }
+
+            return mapper.convertValue(itemsNode, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
             log.error("Invalid JSON from Node:\n{}", output);
             throw new RuntimeException("Invalid JSON from Node", e);

@@ -5,7 +5,7 @@ import com.easypublish.parsed.EasyPublishParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,16 +18,26 @@ import java.util.List;
 
 @Service
 public class BlockEmitterIndexer {
-    @Autowired
-    private EasyPublishParser easyPublishParser;
-    @Autowired
+    private final EasyPublishParser easyPublishParser;
     private final EntityManager em;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Autowired
     public BlockEmitterIndexer(EntityManager em, EasyPublishParser easyPublishParser) {
-        this.em = em;this.easyPublishParser = easyPublishParser;
+        this.em = em;
+        this.easyPublishParser = easyPublishParser;
     }
+
+    @Value("${app.iota.network:testnet}")
+    private String iotaNetwork;
+
+    @Value("${app.iota.rpc-urls:}")
+    private String iotaRpcUrls;
+
+    @Value("${app.iota.rpc-attempts-per-url:2}")
+    private int iotaRpcAttemptsPerUrl;
+
+    @Value("${app.iota.rpc-retry-delay-ms:400}")
+    private int iotaRpcRetryDelayMs;
 
     // ----------------------------
     // JSON helpers
@@ -633,6 +643,18 @@ public class BlockEmitterIndexer {
                 id,
                 type
         );
+        if (iotaNetwork != null && !iotaNetwork.isBlank()) {
+            pb.environment().put("IOTA_NETWORK", iotaNetwork.trim());
+        }
+        if (iotaRpcUrls != null && !iotaRpcUrls.isBlank()) {
+            pb.environment().put("IOTA_RPC_URLS", iotaRpcUrls.trim());
+        }
+        if (iotaRpcAttemptsPerUrl > 0) {
+            pb.environment().put("IOTA_RPC_ATTEMPTS_PER_URL", String.valueOf(iotaRpcAttemptsPerUrl));
+        }
+        if (iotaRpcRetryDelayMs >= 0) {
+            pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+        }
 
         Process process = pb.start();
 

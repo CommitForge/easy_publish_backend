@@ -1,20 +1,107 @@
 #!/usr/bin/env node
 
-import { IotaClient, getFullnodeUrl } from '@iota/iota-sdk/client';
-import { normalizeId } from './objectUtils.js';
+import {
+  createRpcClients,
+  fetchObjectByIdWithRetry,
+  isLikelyNotFoundError,
+  isLikelyRetryableRpcError,
+  normalizeId,
+} from './objectUtils.js';
 
-const client = new IotaClient({
-  url: getFullnodeUrl('testnet'),
-});
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+const network = (process.env.IOTA_NETWORK || 'testnet').trim() || 'testnet';
+const attemptsPerUrl = parsePositiveInt(
+  process.env.IOTA_RPC_ATTEMPTS_PER_URL || process.env.IOTA_RPC_MAX_ATTEMPTS_PER_URL || '2',
+  2
+);
+const retryDelayMs = parseNonNegativeInt(process.env.IOTA_RPC_RETRY_DELAY_MS || '400', 400);
+const rpcClients = createRpcClients({ network });
+
+function toObjectArray(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.data)) return response.data;
+  return [];
+}
+
+async function findObjectsByOwner(userAddress) {
+  if (!userAddress) return [];
+
+  const attempts = [];
+  let lastError = null;
+
+  for (const rpcClient of rpcClients) {
+    const url = rpcClient?.url ?? '<unknown>';
+    const client = rpcClient?.client;
+    if (!client) continue;
+
+    try {
+      const response = await client.findObjects({ owner: userAddress });
+      return toObjectArray(response);
+    } catch (error) {
+      lastError = error;
+      attempts.push({
+        url,
+        message: error?.message || String(error),
+      });
+
+      if (isLikelyNotFoundError(error)) {
+        return [];
+      }
+
+      if (!isLikelyRetryableRpcError(error)) {
+        break;
+      }
+    }
+  }
+
+  const attemptedUrls = rpcClients.map((item) => item?.url).filter(Boolean).join(', ');
+  const error = new Error(
+    `RPC findObjects failed for owner ${userAddress}. Attempted URLs: [${attemptedUrls}]. Last error: ${lastError?.message || 'unknown error'}`,
+    { cause: lastError || undefined }
+  );
+  error.attempts = attempts;
+  throw error;
+}
 
 /**
  * Fetch a Move object by ID
  */
 async function getObject(id) {
-  if (!id) return null;
-  const res = await client.getObject({ id, options: { showContent: true } });
-  if (!res?.data?.content) return null;
-  return res.data.content.fields || null;
+  const objectId = normalizeId(id);
+  if (!objectId) return null;
+
+  try {
+    const objectData = await fetchObjectByIdWithRetry(
+      rpcClients,
+      objectId,
+      {
+        showType: false,
+        showContent: true,
+        showOwner: false,
+        showDisplay: false,
+        throwIfMissing: true,
+      },
+      {
+        attemptsPerUrl,
+        retryDelayMs,
+      }
+    );
+    return objectData?.fields ?? null;
+  } catch (error) {
+    if (isLikelyNotFoundError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -22,9 +109,7 @@ async function getObject(id) {
  */
 async function getAllContainers(userAddress, maxItems = 100) {
   const results = [];
-  // TODO: adapt this to your Chain setup; example using a placeholder
-  // For now, we just simulate fetching all containers
-  const searchRes = await client.findObjects({ owner: userAddress });
+  const searchRes = await findObjectsByOwner(userAddress);
   for (const obj of searchRes.slice(0, maxItems)) {
     results.push({ object_id: normalizeId(obj.id), fields: obj });
   }
@@ -146,7 +231,10 @@ async function main() {
       )
     );
   } catch (err) {
-    console.error('Error fetching items:', err.message);
+    console.error('Error fetching items:', err.message || err);
+    if (Array.isArray(err?.attempts) && err.attempts.length > 0) {
+      console.error('RPC attempts:', JSON.stringify(err.attempts));
+    }
     process.exit(1);
   }
 }

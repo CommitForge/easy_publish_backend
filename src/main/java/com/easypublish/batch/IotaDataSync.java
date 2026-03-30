@@ -7,9 +7,9 @@ import com.easypublish.repositories.*;
 import com.easypublish.service.EasyPublishOffchainIndexService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import jakarta.persistence.EntityManager;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 @Service
 public class IotaDataSync {
 
+    @Autowired
     private BlockEmitterIndexer indexer;
     @Autowired
     public EntityManager em;
@@ -57,56 +58,28 @@ public class IotaDataSync {
     private EasyPublishOffchainIndexService easyPublishOffchainIndexService;
     @Autowired
     private ContainerRepository containerRepository;
-    @PostConstruct
-    public void init() {
-        this.indexer = new BlockEmitterIndexer(em, easyPublishParser);
-    }
+
+    @Value("${app.iota.network:testnet}")
+    private String iotaNetwork;
+
+    @Value("${app.iota.rpc-urls:}")
+    private String iotaRpcUrls;
+
+    @Value("${app.iota.rpc-attempts-per-url:2}")
+    private int iotaRpcAttemptsPerUrl;
+
+    @Value("${app.iota.rpc-retry-delay-ms:400}")
+    private int iotaRpcRetryDelayMs;
+
+    @Value("${app.iota.node-fetch-max-attempts:3}")
+    private int nodeFetchMaxAttempts;
+
+    @Value("${app.iota.node-fetch-retry-delay-ms:1000}")
+    private long nodeFetchRetryDelayMs;
 
     // ----------------------------
     // Fetch data via Node.js script (safe JSON parsing)
     // ----------------------------
-    private JsonNode fetchContainerData(String containerId, String type) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(
-                "node",
-                "node/getContainerItems.js",
-                containerId,
-                type
-        );
-        Process process = pb.start();
-
-        // read stdout and stderr separately
-        StringBuilder stdout = new StringBuilder();
-        StringBuilder stderr = new StringBuilder();
-
-        try (BufferedReader out = new BufferedReader(new InputStreamReader(process.getInputStream()));
-             BufferedReader err = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-
-            String line;
-            while ((line = out.readLine()) != null) stdout.append(line);
-            while ((line = err.readLine()) != null) stderr.append(line);
-        }
-
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new RuntimeException("Node process failed, exit code: " + exitCode + "\nError: " + stderr);
-        }
-
-        // strip non-JSON characters from stdout (keep only first { … } or [ … ])
-        String output = stdout.toString().trim();
-        int firstBrace = output.indexOf("{");
-        int firstBracket = output.indexOf("[");
-        int start = -1;
-        if (firstBrace >= 0 && (firstBracket < 0 || firstBrace < firstBracket)) start = firstBrace;
-        else if (firstBracket >= 0) start = firstBracket;
-
-        if (start >= 0) {
-            output = output.substring(start);
-        } else {
-            throw new RuntimeException("No JSON found in Node output:\n" + output);
-        }
-
-        return mapper.readTree(output);
-    }
     private JsonNode fetchObjectData(String objectId, String type) throws Exception {
         if (objectId == null || objectId.isBlank()) {
             throw new IllegalArgumentException("objectId must not be null");
@@ -119,28 +92,93 @@ public class IotaDataSync {
             throw new RuntimeException("Node script not found: " + scriptPath);
         }
 
-        ProcessBuilder pb = new ProcessBuilder(
-                "node",
-                scriptPath.toString(),
-                objectId,
-                typeArg
+        int maxAttempts = Math.max(1, nodeFetchMaxAttempts);
+        String output = "";
+        int exitCode = 0;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            ProcessBuilder pb = new ProcessBuilder(
+                    "node",
+                    scriptPath.toString(),
+                    objectId,
+                    typeArg
+            );
+            pb.redirectErrorStream(true);
+
+            if (iotaNetwork != null && !iotaNetwork.isBlank()) {
+                pb.environment().put("IOTA_NETWORK", iotaNetwork);
+            }
+            if (iotaRpcUrls != null && !iotaRpcUrls.isBlank()) {
+                pb.environment().put("IOTA_RPC_URLS", iotaRpcUrls);
+            }
+            if (iotaRpcAttemptsPerUrl > 0) {
+                pb.environment().put("IOTA_RPC_ATTEMPTS_PER_URL", String.valueOf(iotaRpcAttemptsPerUrl));
+            }
+            if (iotaRpcRetryDelayMs >= 0) {
+                pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+            }
+
+            Process process = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                output = reader.lines().collect(Collectors.joining(System.lineSeparator()));
+            }
+
+            exitCode = process.waitFor();
+            if (exitCode == 0) {
+                try {
+                    return mapper.readTree(output);
+                } catch (Exception parseError) {
+                    throw new RuntimeException(
+                            "Node output was not valid JSON for objectId=" + objectId + ", type=" + typeArg
+                                    + "\nOutput:\n" + output,
+                            parseError
+                    );
+                }
+            }
+
+            if (attempt >= maxAttempts || !isRetryableNodeFetchFailure(output)) {
+                throw new RuntimeException(
+                        "Node process failed for objectId=" + objectId + ", type=" + typeArg
+                                + ", exit code: " + exitCode
+                                + ", attempt " + attempt + "/" + maxAttempts
+                                + "\nOutput:\n" + output
+                );
+            }
+
+            long delayMs = Math.max(0L, nodeFetchRetryDelayMs) * attempt;
+            if (delayMs > 0) {
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException interruptedException) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted while retrying node fetch for objectId=" + objectId, interruptedException);
+                }
+            }
+        }
+
+        throw new RuntimeException(
+                "Node process failed for objectId=" + objectId + ", type=" + typeArg
+                        + ", exit code: " + exitCode
+                        + "\nOutput:\n" + output
         );
+    }
 
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-
-        String output;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            output = reader.lines().collect(Collectors.joining());
+    private boolean isRetryableNodeFetchFailure(String output) {
+        if (output == null || output.isBlank()) {
+            return false;
         }
 
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new RuntimeException("Node process failed, exit code: " + exitCode + "\nOutput: " + output);
-        }
-
-        ObjectMapper mapper = new ObjectMapper();
-        return mapper.readTree(output);
+        String lower = output.toLowerCase();
+        return lower.contains("fetch failed")
+                || lower.contains("timed out")
+                || lower.contains("timeout")
+                || lower.contains("econnreset")
+                || lower.contains("econnrefused")
+                || lower.contains("enotfound")
+                || lower.contains("eai_again")
+                || lower.contains("socket hang up")
+                || lower.contains("tls")
+                || lower.contains("network");
     }
 
     @Transactional

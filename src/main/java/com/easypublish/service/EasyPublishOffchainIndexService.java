@@ -64,6 +64,7 @@ public class EasyPublishOffchainIndexService {
                 .toList();
     }
 
+    @Transactional
     public IndexSummary reindexAllDataItems() {
         if (!reindexLock.tryLock()) {
             return IndexSummary.skipped("Offchain easy_publish index rebuild already running");
