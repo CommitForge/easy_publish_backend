@@ -4,7 +4,7 @@
 
 Spring Boot + PostgreSQL + Node.js integration layer for indexing and serving IOTA on-chain container data.
 
-![Java](https://img.shields.io/badge/Java-22-0b7285?style=for-the-badge)
+![Java](https://img.shields.io/badge/Java-25-0b7285?style=for-the-badge)
 ![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.5.x-2f9e44?style=for-the-badge)
 ![Maven](https://img.shields.io/badge/Maven-Build-c92a2a?style=for-the-badge)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-1c7ed6?style=for-the-badge)
@@ -74,7 +74,7 @@ graph LR
 
 | Tool | Version Used By Project |
 |---|---|
-| Java | 22 |
+| Java | 25 |
 | Maven | 3.9+ |
 | Node.js | 18+ recommended |
 | PostgreSQL | 14+ recommended |
@@ -159,7 +159,7 @@ All paths below are relative to `/izipublish`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `domain`, `page`, `pageSize`) |
+| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `dataItemId`, `dataItemVerificationId`, `dataItemVerificationVerified`, `domain`, `page`, `pageSize`) |
 | `GET` | `/api/containers/{id}` | Container by ID |
 | `GET` | `/api/data-types/{id}` | DataType by ID |
 | `GET` | `/api/data-items/{id}` | DataItem by ID |
@@ -191,8 +191,33 @@ All paths below are relative to `/izipublish`.
 ### Curl Examples
 
 ```bash
-curl "http://localhost:8084/izipublish/api/items?include=DATA_ITEM&userAddress=0x123&page=0&pageSize=20"
+curl "http://localhost:8084/izipublish/api/items?include=CONTAINER&userAddress=0x123&page=0&pageSize=20"
 ```
+
+```bash
+curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION&userAddress=0x123&containerId=0xcontainer&page=0&pageSize=20"
+```
+
+```bash
+curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION&userAddress=0x123&containerId=0xcontainer&dataItemVerificationVerified=true&page=0&pageSize=20"
+```
+
+### `/api/items` Pagination Levels
+
+- `container` level: when `containerId` is not provided.
+- `data_type` level: when `containerId` is set and `include` has `DATA_TYPE` but not `DATA_ITEM`.
+- `data_item` level: when `containerId` is set and `include` has `DATA_ITEM`.
+
+Response includes a `meta` object with:
+
+- `paginationLevel`, `page`, `pageSize`, `totalPages`, `hasNext`
+- `includes`, `filters`
+- aggregate counters (`totalContainers`, `totalDataTypes`, `totalDataItems`, `totalDataItemVerifications`)
+- `dataItemVerificationFilteredAfterPagination` flag for frontend handling
+
+Frontend handoff guide:
+
+- `docs/frontend-items-integration.md`
 
 ```bash
 curl -X POST "http://localhost:8084/izipublish/update-chain/sync" \

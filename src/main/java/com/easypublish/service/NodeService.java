@@ -4,7 +4,9 @@ import com.easypublish.dtos.ContainerNodeDto;
 import com.easypublish.dtos.ContainerTreeDto;
 import com.easypublish.dtos.ContainerTreeIncludeEnum;
 import com.easypublish.dtos.DataItemNodeDto;
+import com.easypublish.dtos.DataItemRevisionDto;
 import com.easypublish.dtos.DataTypeNodeDto;
+import com.easypublish.entities.offchain.OffchainDataItemRevision;
 import com.easypublish.entities.UserDataEntity;
 import com.easypublish.entities.onchain.Container;
 import com.easypublish.entities.onchain.DataItem;
@@ -14,6 +16,8 @@ import com.easypublish.repositories.ContainerRepository;
 import com.easypublish.repositories.DataItemRepository;
 import com.easypublish.repositories.DataItemVerificationRepository;
 import com.easypublish.repositories.DataTypeRepository;
+import com.easypublish.repositories.OffchainDataItemRevisionRepository;
+import com.easypublish.repositories.PublishTargetRepository;
 import com.easypublish.repositories.UserDataRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,8 +37,13 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +59,23 @@ public class NodeService {
     private static final String TYPE_CONTAINER = "container";
     private static final String TYPE_DATA_TYPE = "data_type";
     private static final String TYPE_DATA_ITEM = "data_item";
+    private static final Pattern OBJECT_ID_PATTERN = Pattern.compile("^0x[a-fA-F0-9]{64}$");
+    private static final List<String> REVISION_ID_KEYS = List.of(
+            "replaces",
+            "replaced",
+            "previous",
+            "previousIds",
+            "previous_ids",
+            "previousDataItemIds",
+            "previous_data_item_ids",
+            "of",
+            "items",
+            "references",
+            "revisionOf",
+            "revision_of"
+    );
+
+    private record RevisionExtraction(boolean enabled, List<String> replaces) {}
 
     private final UserDataRepository userRepository;
     private final ObjectMapper mapper;
@@ -57,6 +83,8 @@ public class NodeService {
     private final DataTypeRepository dataTypeRepository;
     private final ContainerRepository containerRepository;
     private final DataItemVerificationRepository dataItemVerificationRepository;
+    private final OffchainDataItemRevisionRepository offchainDataItemRevisionRepository;
+    private final PublishTargetRepository publishTargetRepository;
     private final NodeQueryService nodeQueryService;
 
     // Extracted to properties for environment portability:
@@ -72,6 +100,8 @@ public class NodeService {
             DataTypeRepository dataTypeRepository,
             ContainerRepository containerRepository,
             DataItemVerificationRepository dataItemVerificationRepository,
+            OffchainDataItemRevisionRepository offchainDataItemRevisionRepository,
+            PublishTargetRepository publishTargetRepository,
             NodeQueryService nodeQueryService,
             @Value("${app.node.binary:node}") String nodeBinary,
             @Value("${app.node.items-script:getItems.js}") String nodeScript,
@@ -83,6 +113,8 @@ public class NodeService {
         this.dataTypeRepository = dataTypeRepository;
         this.containerRepository = containerRepository;
         this.dataItemVerificationRepository = dataItemVerificationRepository;
+        this.offchainDataItemRevisionRepository = offchainDataItemRevisionRepository;
+        this.publishTargetRepository = publishTargetRepository;
         this.nodeQueryService = nodeQueryService;
         this.nodeBinary = nodeBinary;
         this.nodeScript = nodeScript;
@@ -221,6 +253,8 @@ public class NodeService {
                     diMap.put("name", di.getName());
                     diMap.put("description", di.getDescription());
                     diMap.put("content", di.getContent());
+                    diMap.put("references", di.getReferences());
+                    diMap.put("revision", buildRevisionDto(di));
                     diMap.put("creator", di.getCreator());
                     diMap.put("prevId", di.getPrevId());
                     diMap.put("prevDataTypeItemId", di.getPrevDataTypeItemId());
@@ -293,90 +327,274 @@ public class NodeService {
     public ContainerTreeDto getContainerTree(
             String containerId,
             String dataTypeId,
+            String dataItemId,
+            String dataItemVerificationId,
+            Boolean dataItemVerificationVerified,
             String creatorAddr,
             String domain,
             int page,
             int pageSize,
             EnumSet<ContainerTreeIncludeEnum> includes
     ) {
-        if (containerId == null || containerId.isBlank()) {
+        EnumSet<ContainerTreeIncludeEnum> safeIncludes =
+                includes == null
+                        ? EnumSet.of(ContainerTreeIncludeEnum.CONTAINER)
+                        : EnumSet.copyOf(includes);
+        safeIncludes.add(ContainerTreeIncludeEnum.CONTAINER);
+
+        boolean includeDataTypes = safeIncludes.contains(ContainerTreeIncludeEnum.DATA_TYPE)
+                || safeIncludes.contains(ContainerTreeIncludeEnum.DATA_ITEM);
+        boolean includeDataItems = safeIncludes.contains(ContainerTreeIncludeEnum.DATA_ITEM);
+        boolean includeDataItemVerifications = safeIncludes.contains(ContainerTreeIncludeEnum.DATA_ITEM_VERIFICATION)
+                && includeDataItems;
+
+        String normalizedDomain = (domain == null || domain.isBlank()) ? null : domain;
+        String normalizedContainerId = normalizeBlank(containerId);
+        String normalizedDataTypeId = normalizeBlank(dataTypeId);
+        String normalizedDataItemId = normalizeBlank(dataItemId);
+        String normalizedDataItemVerificationId = normalizeBlank(dataItemVerificationId);
+
+        if (normalizedContainerId == null) {
             Pageable pageable = PageRequest.of(page, pageSize);
+            Page<Container> containerPage = normalizedDomain != null
+                    ? containerRepository.findByPublishTargetDomainPage(normalizedDomain, pageable)
+                    : containerRepository.findAccessibleContainersPage(creatorAddr, pageable);
 
-            List<Container> containers = (domain != null && !domain.isBlank())
-                    ? containerRepository.findByPublishTargetDomain(domain, pageable)
-                    : containerRepository.findAccessibleContainers(creatorAddr, pageable);
-
-            List<ContainerNodeDto> containerNodes = containers.stream()
+            List<ContainerNodeDto> containerNodes = containerPage.getContent().stream()
                     .map(container -> new ContainerNodeDto(container, List.of()))
                     .toList();
 
-            return new ContainerTreeDto(containerNodes);
+            Map<String, Object> meta = buildMeta(
+                    "container",
+                    page,
+                    pageSize,
+                    safeIncludes,
+                    normalizedContainerId,
+                    normalizedDataTypeId,
+                    normalizedDataItemId,
+                    normalizedDataItemVerificationId,
+                    dataItemVerificationVerified,
+                    normalizedDomain,
+                    containerPage.getTotalElements(),
+                    containerNodes.size(),
+                    0L,
+                    0L,
+                    0L,
+                    containerPage.getTotalPages(),
+                    containerPage.hasNext(),
+                    false
+            );
+
+            return new ContainerTreeDto(containerNodes, meta);
         }
 
-        Container container = containerRepository.findById(containerId)
-                .orElseThrow(() -> new IllegalArgumentException("Container not found"));
+        Container container = containerRepository.findById(normalizedContainerId)
+                .orElseThrow(() -> new IllegalArgumentException("Container not found: " + normalizedContainerId));
 
-        List<DataTypeNodeDto> typeNodes = List.of();
+        if (!includeDataTypes) {
+            Map<String, Object> meta = buildMeta(
+                    "container",
+                    page,
+                    pageSize,
+                    safeIncludes,
+                    normalizedContainerId,
+                    normalizedDataTypeId,
+                    normalizedDataItemId,
+                    normalizedDataItemVerificationId,
+                    dataItemVerificationVerified,
+                    normalizedDomain,
+                    1L,
+                    1L,
+                    0L,
+                    0L,
+                    0L,
+                    1,
+                    false,
+                    false
+            );
+            return new ContainerTreeDto(List.of(new ContainerNodeDto(container, List.of())), meta);
+        }
 
-        if (includes.contains(ContainerTreeIncludeEnum.DATA_TYPE) ||
-                includes.contains(ContainerTreeIncludeEnum.DATA_ITEM)) {
+        List<DataType> allMatchingDataTypes = resolveDataTypes(
+                normalizedContainerId,
+                normalizedDataTypeId,
+                normalizedDomain
+        );
+        List<String> dataTypeIds = allMatchingDataTypes.stream()
+                .map(DataType::getId)
+                .toList();
 
-            List<DataType> dataTypes;
-            if (dataTypeId != null && !dataTypeId.isBlank()) {
-                dataTypes = dataTypeRepository.findByIdAndContainer(dataTypeId, container.getId())
-                        .map(List::of)
-                        .orElse(List.of());
-            } else if (domain != null && !domain.isBlank()) {
-                dataTypes = dataTypeRepository.findByContainerAndPublishTargetDomain(container.getId(), domain);
-            } else {
-                dataTypes = dataTypeRepository.findByContainer(container.getId());
-            }
+        if (!includeDataItems) {
+            Pageable pageable = PageRequest.of(page, pageSize);
+            Page<DataType> dataTypePage;
 
-            List<String> dataTypeIds = dataTypes.stream().map(DataType::getId).toList();
-
-            if (!dataTypeIds.isEmpty() && includes.contains(ContainerTreeIncludeEnum.DATA_ITEM)) {
-                Pageable pageable = PageRequest.of(page, pageSize);
-
-                Page<DataItem> itemPage = dataItemRepository.findByContainerIdAndDataTypeIdInAndOptionalDomain(
-                        container.getId(),
-                        dataTypeIds,
-                        (domain == null || domain.isBlank()) ? null : domain,
+            if (normalizedDataTypeId != null) {
+                List<DataType> single = allMatchingDataTypes;
+                boolean outOfRange = page > 0;
+                List<DataType> pagedContent = outOfRange ? List.of() : single;
+                dataTypePage = new org.springframework.data.domain.PageImpl<>(
+                        pagedContent,
+                        pageable,
+                        single.size()
+                );
+            } else if (normalizedDomain != null) {
+                dataTypePage = dataTypeRepository.findByContainerAndPublishTargetDomainPage(
+                        normalizedContainerId,
+                        normalizedDomain,
                         pageable
                 );
-
-                List<DataItem> pagedItems = itemPage.getContent();
-                List<String> itemIds = pagedItems.stream().map(DataItem::getId).toList();
-                List<DataItemVerification> verifications = itemIds.isEmpty()
-                        ? List.of()
-                        : dataItemVerificationRepository.findByDataItemIdIn(itemIds);
-
-                Map<String, List<DataItemVerification>> verificationsByItemId = verifications.stream()
-                        .collect(Collectors.groupingBy(DataItemVerification::getDataItemId));
-
-                Map<String, List<DataItem>> itemsByTypeId = pagedItems.stream()
-                        .collect(Collectors.groupingBy(DataItem::getDataTypeId));
-
-                typeNodes = dataTypes.stream()
-                        .map(dt -> {
-                            List<DataItem> items = itemsByTypeId.getOrDefault(dt.getId(), List.of());
-                            List<DataItemNodeDto> itemDtos = items.stream()
-                                    .map(di -> new DataItemNodeDto(
-                                            di,
-                                            verificationsByItemId.getOrDefault(di.getId(), List.of())
-                                    ))
-                                    .toList();
-
-                            return new DataTypeNodeDto(dt, itemDtos);
-                        })
-                        .toList();
             } else {
-                typeNodes = dataTypes.stream()
-                        .map(dt -> new DataTypeNodeDto(dt, List.of()))
-                        .toList();
+                dataTypePage = dataTypeRepository.findByContainerPage(normalizedContainerId, pageable);
             }
+
+            List<DataTypeNodeDto> typeNodes = dataTypePage.getContent().stream()
+                    .map(dt -> new DataTypeNodeDto(dt, List.of()))
+                    .toList();
+
+            Map<String, Object> meta = buildMeta(
+                    "data_type",
+                    page,
+                    pageSize,
+                    safeIncludes,
+                    normalizedContainerId,
+                    normalizedDataTypeId,
+                    normalizedDataItemId,
+                    normalizedDataItemVerificationId,
+                    dataItemVerificationVerified,
+                    normalizedDomain,
+                    1L,
+                    1L,
+                    dataTypePage.getTotalElements(),
+                    0L,
+                    0L,
+                    dataTypePage.getTotalPages(),
+                    dataTypePage.hasNext(),
+                    false
+            );
+
+            return new ContainerTreeDto(List.of(new ContainerNodeDto(container, typeNodes)), meta);
         }
 
-        return new ContainerTreeDto(List.of(new ContainerNodeDto(container, typeNodes)));
+        List<DataItem> items;
+        long totalDataItems;
+        int totalPages;
+        boolean hasNext;
+
+        if (normalizedDataItemId != null) {
+            items = resolveSingleDataItem(
+                    normalizedContainerId,
+                    dataTypeIds,
+                    normalizedDataItemId,
+                    normalizedDomain
+            );
+            totalDataItems = items.size();
+            totalPages = totalDataItems > 0 ? 1 : 0;
+            hasNext = false;
+        } else if (dataTypeIds.isEmpty()) {
+            items = List.of();
+            totalDataItems = 0;
+            totalPages = 0;
+            hasNext = false;
+        } else {
+            Page<DataItem> itemPage = dataItemRepository.findByContainerIdAndDataTypeIdInAndOptionalDomain(
+                    normalizedContainerId,
+                    dataTypeIds,
+                    normalizedDomain,
+                    PageRequest.of(page, pageSize)
+            );
+            items = itemPage.getContent();
+            totalDataItems = itemPage.getTotalElements();
+            totalPages = itemPage.getTotalPages();
+            hasNext = itemPage.hasNext();
+        }
+
+        List<String> itemIds = items.stream().map(DataItem::getId).toList();
+        List<DataItemVerification> dataItemVerifications = includeDataItemVerifications && !itemIds.isEmpty()
+                ? dataItemVerificationRepository.findByDataItemIdIn(itemIds)
+                : List.of();
+
+        if (normalizedDataItemVerificationId != null) {
+            dataItemVerifications = dataItemVerifications.stream()
+                    .filter(v -> normalizedDataItemVerificationId.equals(v.getId()))
+                    .toList();
+        }
+
+        if (dataItemVerificationVerified != null) {
+            dataItemVerifications = dataItemVerifications.stream()
+                    .filter(v -> Objects.equals(dataItemVerificationVerified, v.getVerified()))
+                    .toList();
+        }
+
+        Map<String, List<DataItemVerification>> dataItemVerificationsByItemId = dataItemVerifications.stream()
+                .collect(Collectors.groupingBy(DataItemVerification::getDataItemId));
+
+        boolean dataItemVerificationFiltered =
+                normalizedDataItemVerificationId != null || dataItemVerificationVerified != null;
+        if (dataItemVerificationFiltered) {
+            items = items.stream()
+                    .filter(di -> !dataItemVerificationsByItemId.getOrDefault(di.getId(), List.of()).isEmpty())
+                    .toList();
+        }
+        Map<String, List<DataItem>> itemsByTypeId = items.stream()
+                .collect(Collectors.groupingBy(DataItem::getDataTypeId));
+
+        List<DataType> responseDataTypes = allMatchingDataTypes;
+        if (normalizedDataItemId != null && !items.isEmpty()) {
+            String selectedTypeId = items.get(0).getDataTypeId();
+            responseDataTypes = allMatchingDataTypes.stream()
+                    .filter(dt -> selectedTypeId.equals(dt.getId()))
+                    .toList();
+        }
+
+        if (responseDataTypes.isEmpty() && normalizedDataItemId != null) {
+            responseDataTypes = allMatchingDataTypes;
+        }
+
+        List<DataTypeNodeDto> typeNodes = responseDataTypes.stream()
+                .map(dt -> {
+                    List<DataItemNodeDto> itemDtos = itemsByTypeId.getOrDefault(dt.getId(), List.of()).stream()
+                            .map(di -> new DataItemNodeDto(
+                                    di,
+                                    includeDataItemVerifications
+                                            ? dataItemVerificationsByItemId.getOrDefault(di.getId(), List.of())
+                                            : List.of(),
+                                    buildRevisionDto(di)
+                            ))
+                            .toList();
+
+                    return new DataTypeNodeDto(dt, itemDtos);
+                })
+                .toList();
+
+        long returnedItems = items.size();
+        long returnedDataItemVerifications = typeNodes.stream()
+                .flatMap(dt -> dt.getDataItems().stream())
+                .mapToLong(di -> di.getDataItemVerifications().size())
+                .sum();
+
+        Map<String, Object> meta = buildMeta(
+                "data_item",
+                page,
+                pageSize,
+                safeIncludes,
+                normalizedContainerId,
+                normalizedDataTypeId,
+                normalizedDataItemId,
+                normalizedDataItemVerificationId,
+                dataItemVerificationVerified,
+                normalizedDomain,
+                1L,
+                1L,
+                responseDataTypes.size(),
+                totalDataItems,
+                returnedDataItemVerifications,
+                totalPages,
+                hasNext,
+                dataItemVerificationFiltered
+        );
+        meta.put("returnedDataItems", returnedItems);
+
+        return new ContainerTreeDto(List.of(new ContainerNodeDto(container, typeNodes)), meta);
     }
 
     /**
@@ -393,6 +611,208 @@ public class NodeService {
 
     private static boolean isBlankOrUndefined(String value) {
         return value == null || value.isBlank() || "undefined".equals(value);
+    }
+
+    private List<DataType> resolveDataTypes(String containerId, String dataTypeId, String domain) {
+        if (dataTypeId != null) {
+            return dataTypeRepository.findByIdAndContainer(dataTypeId, containerId)
+                    .map(List::of)
+                    .orElse(List.of());
+        }
+        if (domain != null) {
+            return dataTypeRepository.findByContainerAndPublishTargetDomain(containerId, domain);
+        }
+        return dataTypeRepository.findByContainer(containerId);
+    }
+
+    private List<DataItem> resolveSingleDataItem(
+            String containerId,
+            List<String> dataTypeIds,
+            String dataItemId,
+            String domain
+    ) {
+        return dataItemRepository.findByIdAndContainerId(dataItemId, containerId)
+                .filter(di -> dataTypeIds.isEmpty() || dataTypeIds.contains(di.getDataTypeId()))
+                .filter(di -> domain == null || publishTargetRepository.findByDomainAndDataItemId(domain, di.getId()).isPresent())
+                .map(List::of)
+                .orElse(List.of());
+    }
+
+    private DataItemRevisionDto buildRevisionDto(DataItem dataItem) {
+        List<OffchainDataItemRevision> indexedRows =
+                offchainDataItemRevisionRepository.findByDataItemIdOrderByIdAsc(dataItem.getId());
+
+        if (!indexedRows.isEmpty()) {
+            boolean enabled = indexedRows.stream().anyMatch(OffchainDataItemRevision::isEnabled);
+            List<String> replaces = indexedRows.stream()
+                    .map(OffchainDataItemRevision::getReplacedDataItemId)
+                    .filter(Objects::nonNull)
+                    .filter(id -> !id.isBlank())
+                    .distinct()
+                    .toList();
+            return new DataItemRevisionDto(enabled, replaces);
+        }
+
+        List<String> referenceIds = normalizeObjectIds(dataItem.getReferences());
+        RevisionExtraction extraction = extractRevisionExtraction(dataItem.getContent(), referenceIds);
+        return new DataItemRevisionDto(
+                extraction.enabled(),
+                extraction.replaces()
+        );
+    }
+
+    private RevisionExtraction extractRevisionExtraction(String content, List<String> referenceIds) {
+        if (content == null || content.isBlank()) {
+            return new RevisionExtraction(false, List.of());
+        }
+
+        try {
+            Map<String, Object> contentMap = mapper.readValue(
+                    content,
+                    new TypeReference<Map<String, Object>>() {}
+            );
+
+            Object easyPublishObject = contentMap.get("easy_publish");
+            if (easyPublishObject == null) {
+                easyPublishObject = contentMap.get("easyPublish");
+            }
+            if (!(easyPublishObject instanceof Map<?, ?> easyPublishMap)) {
+                return new RevisionExtraction(false, List.of());
+            }
+
+            Object revisionsObject = easyPublishMap.get("revisions");
+            if (revisionsObject == null) {
+                return new RevisionExtraction(false, List.of());
+            }
+
+            if (revisionsObject instanceof Boolean revisionsEnabled) {
+                if (!revisionsEnabled) {
+                    return new RevisionExtraction(false, List.of());
+                }
+                return new RevisionExtraction(true, referenceIds);
+            }
+
+            if (revisionsObject instanceof Map<?, ?> revisionsMap) {
+                boolean enabled = true;
+                Object enabledRaw = revisionsMap.containsKey("enabled")
+                        ? revisionsMap.get("enabled")
+                        : revisionsMap.get("active");
+                if (enabledRaw instanceof Boolean enabledBoolean) {
+                    enabled = enabledBoolean;
+                }
+
+                if (!enabled) {
+                    return new RevisionExtraction(false, List.of());
+                }
+
+                List<String> explicitPreviousIds = new ArrayList<>();
+                for (String key : REVISION_ID_KEYS) {
+                    explicitPreviousIds.addAll(normalizeObjectIds(revisionsMap.get(key)));
+                }
+
+                List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
+                        ? referenceIds
+                        : normalizeObjectIds(explicitPreviousIds);
+
+                return new RevisionExtraction(true, effectivePreviousIds);
+            }
+
+            List<String> explicitPreviousIds = normalizeObjectIds(revisionsObject);
+            List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
+                    ? referenceIds
+                    : explicitPreviousIds;
+
+            return new RevisionExtraction(true, effectivePreviousIds);
+        } catch (Exception ignored) {
+            return new RevisionExtraction(false, List.of());
+        }
+    }
+
+    private static List<String> normalizeObjectIds(Object value) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        collectObjectIds(value, ids);
+        return List.copyOf(ids);
+    }
+
+    private static void collectObjectIds(Object value, Set<String> sink) {
+        if (value == null) {
+            return;
+        }
+
+        if (value instanceof String stringValue) {
+            for (String token : stringValue.split(",")) {
+                String normalized = token.trim();
+                if (OBJECT_ID_PATTERN.matcher(normalized).matches()) {
+                    sink.add(normalized);
+                }
+            }
+            return;
+        }
+
+        if (value instanceof List<?> listValue) {
+            for (Object entry : listValue) {
+                collectObjectIds(entry, sink);
+            }
+            return;
+        }
+
+        if (value instanceof Map<?, ?> mapValue) {
+            collectObjectIds(mapValue.get("id"), sink);
+            collectObjectIds(mapValue.get("object_id"), sink);
+            collectObjectIds(mapValue.get("dataItemId"), sink);
+            collectObjectIds(mapValue.get("data_item_id"), sink);
+            collectObjectIds(mapValue.get("address"), sink);
+            collectObjectIds(mapValue.get("value"), sink);
+        }
+    }
+
+    private static String normalizeBlank(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private static Map<String, Object> buildMeta(
+            String paginationLevel,
+            int page,
+            int pageSize,
+            EnumSet<ContainerTreeIncludeEnum> includes,
+            String containerId,
+            String dataTypeId,
+            String dataItemId,
+            String dataItemVerificationId,
+            Boolean dataItemVerificationVerified,
+            String domain,
+            long totalContainers,
+            long returnedContainers,
+            long totalDataTypes,
+            long totalDataItems,
+            long totalDataItemVerifications,
+            int totalPages,
+            boolean hasNext,
+            boolean dataItemVerificationFilteredAfterPagination
+    ) {
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("containerId", containerId);
+        filters.put("dataTypeId", dataTypeId);
+        filters.put("dataItemId", dataItemId);
+        filters.put("dataItemVerificationId", dataItemVerificationId);
+        filters.put("dataItemVerificationVerified", dataItemVerificationVerified);
+        filters.put("domain", domain);
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("paginationLevel", paginationLevel);
+        meta.put("page", page);
+        meta.put("pageSize", pageSize);
+        meta.put("totalPages", totalPages);
+        meta.put("hasNext", hasNext);
+        meta.put("includes", includes.stream().map(Enum::name).toList());
+        meta.put("filters", filters);
+        meta.put("totalContainers", totalContainers);
+        meta.put("returnedContainers", returnedContainers);
+        meta.put("totalDataTypes", totalDataTypes);
+        meta.put("totalDataItems", totalDataItems);
+        meta.put("totalDataItemVerifications", totalDataItemVerifications);
+        meta.put("dataItemVerificationFilteredAfterPagination", dataItemVerificationFilteredAfterPagination);
+        return meta;
     }
 
     private static String collectProcessOutput(Process process) throws Exception {

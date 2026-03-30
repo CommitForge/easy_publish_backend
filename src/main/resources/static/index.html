@@ -3,170 +3,248 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EasyPublish</title>
+    <title>EasyPublish API Hub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css" />
-
-
-    <script>
-        fetch('view/items?containerId=0x139b35c2c3e23bfdfbbde3576c71c7af50a3e75cb708743237e17dd1ad2901c8&type=data_item')
-          .then(r => r.text())
-          .then(html => {
-            const container = document.getElementById('items');
-            container.innerHTML = html;
-
-            // ✅ initialize collapsibles AFTER injection
-            initCollapsibles(container);
-          });
-
-        function initCollapsibles(root) {
-          root.querySelectorAll('.bp-items-root .collapsible').forEach(cell => {
-            cell.addEventListener('click', () => {
-              cell.classList.toggle('expanded');
-            });
-          });
-        }  </script>
-    <script>
-        let connectedWallet = null;
-        let account = null;
-
-        async function connectWallet() {
-            if (!window.getWallets) {
-                alert("No IOTA wallets detected. Make sure you have a compatible wallet installed.");
-                return;
-            }
-
-            try {
-                const wallets = await window.getWallets()?.get?.() || [];
-                if (wallets.length === 0) {
-                    alert("No wallets found.");
-                    return;
-                }
-
-                connectedWallet = wallets[0]; // pick the first wallet
-                account = await connectedWallet.features['standard:connect'].connect();
-
-                document.getElementById('walletAddress').innerText = account.address;
-                console.log("Connected wallet:", account);
-            } catch (err) {
-                console.error("Wallet connection failed:", err);
-                alert("Failed to connect wallet: " + err.message);
-            }
-        }
-
-        async function loadItems() {
-            if (!account) {
-                alert("Please connect a wallet first!");
-                return;
-            }
-
-            // Example container ID and type
-            const containerId = '0x139b35c2c3e23bfdfbbde3576c71c7af50a3e75cb708743237e17dd1ad2901c8';
-            const type = 'data_item';
-
-            try {
-                const response = await fetch(`/view/items?containerId=${containerId}&type=${type}`);
-                const html = await response.text();
-                document.getElementById('items').innerHTML = html;
-
-                // Apply collapsible logic
-                document.querySelectorAll('.collapsible').forEach(cell => {
-                    cell.addEventListener('click', () => {
-                        cell.classList.toggle('expanded');
-                    });
-                });
-            } catch (err) {
-                console.error("Failed to load items:", err);
-                document.getElementById('items').innerText = "Error loading items.";
-            }
-        }
-    </script>
-
 </head>
 <body>
+<div class="page-bg"></div>
 
-
-<header class="navbar">
-    <div class="logo">EasyPublish</div>
+<header class="topbar">
+    <div class="brand">EasyPublish</div>
     <nav>
-        <a href="#features">Features</a>
-        <a href="#api">API</a>
-        <a href="#architecture">Architecture</a>
-        <a href="#cta" class="btn">Get Started</a>
+        <a href="#intro">Intro</a>
+        <a href="#items-api">Items API</a>
+        <a href="#examples">Examples</a>
+        <a href="#frontend">Frontend</a>
     </nav>
 </header>
 
-
-<section class="hero">
-    <h1>Composable Containers on-chain</h1>
-    <p>Publish, link, and index structured data containers using MoveVM & IOTA.</p>
-    <div class="hero-actions">
-        <a class="btn secondary" href="/view/items">Explore Data</a>
-        <a class="btn secondary" onclick="connectWallet()">Connect Wallet</a>
-        <p>Wallet address: <span id="walletAddress">Not connected</span></p>
-
-        <a class="btn secondary" href="/api/items">API Docs</a>
-    </div>
-</section>
-
-
-<section id="features" class="features">
-    <h2>Why EasyPublish?</h2>
-    <div class="feature-grid">
-        <div class="feature">
-            <h3>🔗 Linked Containers</h3>
-            <p>Attach child containers with ordered indices and immutable history.</p>
+<main>
+    <section id="intro" class="hero section-card">
+        <p class="eyebrow">Production-Ready Tree Endpoint</p>
+        <h1>One endpoint for containers, data types, items, and data item verifications</h1>
+        <p class="hero-text">
+            <code>/api/items</code> now supports layered pagination and deep filtering in one contract.
+            Container browsing paginates containers, single-container type mode paginates data types,
+            and item mode paginates data items while preserving tree shape for frontend rendering.
+        </p>
+        <div class="hero-actions">
+            <a class="btn primary" href="#examples">Try Lazy Examples</a>
+            <a class="btn secondary" href="#frontend">Frontend Contract</a>
         </div>
-        <div class="feature">
-            <h3>📦 On-chain Indexing</h3>
-            <p>Efficient traversal without recursion or missing segments.</p>
+    </section>
+
+    <section id="items-api" class="section-card">
+        <h2>Items API</h2>
+        <p>
+            Base path: <code>/izipublish/api/items</code>
+        </p>
+
+        <h3>Request Parameters</h3>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>Param</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr><td><code>userAddress</code></td><td>Yes</td><td>Address used for accessible-container scope.</td></tr>
+                <tr><td><code>include</code></td><td>No</td><td>CSV of <code>CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION</code>. Smart defaults are applied if omitted.</td></tr>
+                <tr><td><code>containerId</code></td><td>No</td><td>If set, switches to single-container mode.</td></tr>
+                <tr><td><code>dataTypeId</code></td><td>No</td><td>Restrict to one data type within a container.</td></tr>
+                <tr><td><code>dataItemId</code></td><td>No</td><td>Restrict to a specific data item.</td></tr>
+                <tr><td><code>dataItemVerificationId</code></td><td>No</td><td>Filter data item verifications to one record id.</td></tr>
+                <tr><td><code>dataItemVerificationVerified</code></td><td>No</td><td><code>true/false</code> data item verification status filter.</td></tr>
+                <tr><td><code>domain</code></td><td>No</td><td>Optional publish-domain scope.</td></tr>
+                <tr><td><code>page</code></td><td>No</td><td>0-based page index.</td></tr>
+                <tr><td><code>pageSize</code></td><td>No</td><td>Items per page (clamped server-side).</td></tr>
+                </tbody>
+            </table>
         </div>
-        <div class="feature">
-            <h3>⚡ Event Driven</h3>
-            <p>Consume MoveVM events for real-time off-chain indexing.</p>
+
+        <h3>Pagination Behavior</h3>
+        <ul class="plain-list">
+            <li><strong>No <code>containerId</code>:</strong> pagination level is <code>container</code>.</li>
+            <li><strong><code>containerId</code> + <code>DATA_TYPE</code> only:</strong> pagination level is <code>data_type</code>.</li>
+            <li><strong><code>containerId</code> + <code>DATA_ITEM</code>:</strong> pagination level is <code>data_item</code>.</li>
+        </ul>
+        <p>Each response includes a <code>meta</code> object to make frontend paging decisions deterministic.</p>
+    </section>
+
+    <section id="examples" class="section-card">
+        <h2>Lazy-Loaded Examples</h2>
+        <p>Nothing is fetched until you click an example.</p>
+
+        <div class="form-grid">
+            <label>
+                User Address
+                <input id="userAddress" placeholder="0x..." />
+            </label>
+            <label>
+                Container ID
+                <input id="containerId" placeholder="0x..." />
+            </label>
+            <label>
+                Data Type ID
+                <input id="dataTypeId" placeholder="0x..." />
+            </label>
+            <label>
+                Domain (optional)
+                <input id="domain" placeholder="izipublish.com" />
+            </label>
+            <label>
+                Page
+                <input id="page" type="number" min="0" value="0" />
+            </label>
+            <label>
+                Page Size
+                <input id="pageSize" type="number" min="1" value="20" />
+            </label>
         </div>
-        <div class="feature">
-            <h3>🛡 Ownership Model</h3>
-            <p>Multi-owner containers with safe removal and permissions.</p>
+
+        <div class="example-grid">
+            <article class="example-card">
+                <h3>Example A: Browse Containers</h3>
+                <button data-example="containers">Load</button>
+            </article>
+            <article class="example-card">
+                <h3>Example B: Container Types</h3>
+                <button data-example="types">Load</button>
+            </article>
+            <article class="example-card">
+                <h3>Example C: Container Items</h3>
+                <button data-example="items">Load</button>
+            </article>
+            <article class="example-card">
+                <h3>Example D: Verified Items Only</h3>
+                <button data-example="verified">Load</button>
+            </article>
+            <article class="example-card">
+                <h3>Example E: Failed Data Item Verifications</h3>
+                <button data-example="failed">Load</button>
+            </article>
         </div>
-        <div id="items"></div>
-    </div>
-</section>
 
+        <p class="request-line">Request: <code id="requestUrl">(none yet)</code></p>
+        <pre id="responseBox" class="response-box">Click an example button to load JSON.</pre>
+    </section>
 
-<section id="api" class="api">
-    <h2>Universal Output</h2>
-    <p>Use the same data via REST, Thymeleaf, or embed anywhere.</p>
-    <pre class="code">
-GET /api/items?containerId=0x...&type=data_item
-
-
-GET /view/items?containerId=0x...&type=data_item
-</pre>
-</section>
-
-
-<section id="architecture" class="architecture">
-    <h2>Architecture</h2>
-    <ul>
-        <li>MoveVM smart contracts (IOTA)</li>
-        <li>Event indexing (off-chain)</li>
-        <li>Spring Boot backend</li>
-        <li>Universal HTML output</li>
-    </ul>
-</section>
-
-
-<section id="cta" class="cta">
-    <h2>Build on structured on-chain data</h2>
-    <p>Designed for scale, safety, and composability.</p>
-    <a href="/view/items" class="btn primary">Launch App</a>
-</section>
-
+    <section id="frontend" class="section-card">
+        <h2>Frontend Integration Contract</h2>
+        <ul class="plain-list">
+            <li>Use <code>meta.paginationLevel</code> to decide which UI list owns the current page controls.</li>
+            <li>Use <code>meta.totalPages</code> + <code>meta.hasNext</code> for next/prev button state.</li>
+            <li>Render nodes from <code>containers[] -> dataTypes[] -> dataItems[] -> dataItemVerifications[]</code>.</li>
+            <li>Respect <code>meta.dataItemVerificationFilteredAfterPagination</code> when verification filters are active.</li>
+        </ul>
+    </section>
+</main>
 
 <footer class="footer">
-    <p>© 2026 EasyPublish · Built on IOTA</p>
+    <p>EasyPublish API Hub</p>
 </footer>
 
+<script>
+    const responseBox = document.getElementById('responseBox');
+    const requestUrl = document.getElementById('requestUrl');
 
+    function val(id) {
+      return (document.getElementById(id).value || '').trim();
+    }
+
+    function nval(id, fallback) {
+      const raw = Number(document.getElementById(id).value);
+      return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+    }
+
+    function buildBaseParams() {
+      const params = new URLSearchParams();
+      const userAddress = val('userAddress');
+      if (!userAddress) throw new Error('userAddress is required for /api/items');
+      params.set('userAddress', userAddress);
+
+      const containerId = val('containerId');
+      const dataTypeId = val('dataTypeId');
+      const domain = val('domain');
+      if (containerId) params.set('containerId', containerId);
+      if (dataTypeId) params.set('dataTypeId', dataTypeId);
+      if (domain) params.set('domain', domain);
+
+      params.set('page', String(nval('page', 0)));
+      params.set('pageSize', String(Math.max(1, nval('pageSize', 20))));
+      return params;
+    }
+
+    function setInclude(params, includeCsv) {
+      if (includeCsv) params.set('include', includeCsv);
+      return params;
+    }
+
+    async function loadExample(mode) {
+      try {
+        const params = buildBaseParams();
+
+        if (mode === 'containers') {
+          setInclude(params, 'CONTAINER');
+          params.delete('containerId');
+          params.delete('dataTypeId');
+        }
+
+        if (mode === 'types') {
+          setInclude(params, 'CONTAINER,DATA_TYPE');
+        }
+
+        if (mode === 'items') {
+          setInclude(params, 'CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION');
+        }
+
+        if (mode === 'verified') {
+          setInclude(params, 'CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION');
+          params.set('dataItemVerificationVerified', 'true');
+        }
+
+        if (mode === 'failed') {
+          setInclude(params, 'CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION');
+          params.set('dataItemVerificationVerified', 'false');
+        }
+
+        const url = `/izipublish/api/items?${params.toString()}`;
+        requestUrl.textContent = url;
+        responseBox.textContent = 'Loading...';
+
+        const started = performance.now();
+        const res = await fetch(url);
+        const elapsed = Math.round(performance.now() - started);
+
+        const body = await res.text();
+        if (!res.ok) {
+          responseBox.textContent = `HTTP ${res.status} (${elapsed}ms)\n\n${body}`;
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(body);
+        } catch (_) {
+          responseBox.textContent = `HTTP ${res.status} (${elapsed}ms)\n\n${body}`;
+          return;
+        }
+
+        responseBox.textContent = `HTTP ${res.status} (${elapsed}ms)\n\n${JSON.stringify(parsed, null, 2)}`;
+      } catch (err) {
+        responseBox.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    document.querySelectorAll('button[data-example]').forEach(btn => {
+      btn.addEventListener('click', () => loadExample(btn.dataset.example));
+    });
+</script>
 </body>
 </html>

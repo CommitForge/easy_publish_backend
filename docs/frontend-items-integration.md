@@ -1,0 +1,126 @@
+# Frontend Integration: `/api/items`
+
+Use endpoint:
+
+```text
+GET /izipublish/api/items
+```
+
+## Minimal Query
+
+```text
+userAddress=<wallet-address>
+```
+
+## Common Query Shapes
+
+### 1) Browse containers
+
+```text
+include=CONTAINER
+userAddress=0x...
+page=0
+pageSize=20
+```
+
+### 2) Single container with types
+
+```text
+include=CONTAINER,DATA_TYPE
+userAddress=0x...
+containerId=0x...
+page=0
+pageSize=20
+```
+
+### 3) Single container with items + data item verifications
+
+```text
+include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION
+userAddress=0x...
+containerId=0x...
+page=0
+pageSize=20
+```
+
+### 4) Data item verification status filtering
+
+```text
+include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION
+userAddress=0x...
+containerId=0x...
+dataItemVerificationVerified=true
+page=0
+pageSize=20
+```
+
+## Response Shape (important)
+
+```json
+{
+  "containers": [
+    {
+      "container": { "id": "..." },
+      "dataTypes": [
+        {
+          "dataType": { "id": "..." },
+          "dataItems": [
+            {
+              "dataItem": { "id": "..." },
+              "dataItemVerifications": [ { "id": "...", "verified": true } ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "paginationLevel": "container | data_type | data_item",
+    "page": 0,
+    "pageSize": 20,
+    "totalPages": 3,
+    "hasNext": true,
+    "includes": ["CONTAINER", "DATA_TYPE", "DATA_ITEM", "DATA_ITEM_VERIFICATION"],
+    "filters": {
+      "containerId": null,
+      "dataTypeId": null,
+      "dataItemId": null,
+      "dataItemVerificationId": null,
+      "dataItemVerificationVerified": null,
+      "domain": null
+    },
+    "totalContainers": 50,
+    "returnedContainers": 20,
+    "totalDataTypes": 0,
+    "totalDataItems": 0,
+    "totalDataItemVerifications": 0,
+    "dataItemVerificationFilteredAfterPagination": false
+  }
+}
+```
+
+## Frontend Rules
+
+- Drive pagination by `meta.paginationLevel`.
+- For `container`, page controls are for top-level containers.
+- For `data_type`, page controls are for container's data types.
+- For `data_item`, page controls are for items in selected container scope.
+- If `meta.dataItemVerificationFilteredAfterPagination` is `true`, do not assume `dataItems.length == pageSize`.
+
+## Data Item Revisions (Beta)
+
+In `DATA_ITEM` responses, each item node can now include:
+
+```json
+"revision": {
+  "enabled": true,
+  "replaces": ["0xolderItem..."]
+}
+```
+
+Revision computation is additive and backward-compatible:
+
+- Existing `dataItem` and `dataItemVerifications` fields are unchanged.
+- `replaces` is read from `easy_publish.revisions` in `dataItem.content`.
+- If revisions are enabled but no explicit IDs are provided, backend falls back to `dataItem.references`.
+- Reverse-link fields (for example `supersededBy`/`latest`) are intentionally not included because they are off-chain derived.

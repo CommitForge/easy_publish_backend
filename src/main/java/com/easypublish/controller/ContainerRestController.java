@@ -3,35 +3,44 @@ package com.easypublish.controller;
 import com.easypublish.dtos.ContainerTreeDto;
 import com.easypublish.dtos.ContainerTreeIncludeEnum;
 import com.easypublish.entities.offchain.FollowedContainer;
+import com.easypublish.entities.offchain.OffchainFollowContainer;
 import com.easypublish.entities.onchain.Container;
 import com.easypublish.entities.onchain.DataItem;
 import com.easypublish.entities.onchain.DataType;
 import com.easypublish.repositories.ContainerRepository;
 import com.easypublish.repositories.FollowedContainerRepository;
+import com.easypublish.repositories.OffchainFollowContainerRepository;
 import com.easypublish.service.NodeService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * REST API for browsing containers/data tree and follow/unfollow operations.
  */
 @RestController
 public class ContainerRestController {
+    private static final int DEFAULT_PAGE = 0;
+    private static final int MAX_PAGE_SIZE = 200;
 
     private final NodeService nodeService;
     private final FollowedContainerRepository followedContainerRepository;
+    private final OffchainFollowContainerRepository offchainFollowContainerRepository;
     private final ContainerRepository containerRepository;
-
-    // Extracted to properties: app.follow.max-per-user
-    @Value("${app.follow.max-per-user:1000}")
-    private int maxFollowsPerUser;
 
     // Extracted to properties: app.domain.default-public
     @Value("${app.domain.default-public:izipublish.com}")
@@ -40,10 +49,12 @@ public class ContainerRestController {
     public ContainerRestController(
             NodeService nodeService,
             FollowedContainerRepository followedContainerRepository,
+            OffchainFollowContainerRepository offchainFollowContainerRepository,
             ContainerRepository containerRepository
     ) {
         this.nodeService = nodeService;
         this.followedContainerRepository = followedContainerRepository;
+        this.offchainFollowContainerRepository = offchainFollowContainerRepository;
         this.containerRepository = containerRepository;
     }
 
@@ -53,6 +64,9 @@ public class ContainerRestController {
             @RequestParam String userAddress,
             @RequestParam(required = false) String containerId,
             @RequestParam(required = false) String dataTypeId,
+            @RequestParam(required = false) String dataItemId,
+            @RequestParam(required = false) String dataItemVerificationId,
+            @RequestParam(required = false) Boolean dataItemVerificationVerified,
             @RequestParam(required = false) String domain,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int pageSize
@@ -62,8 +76,10 @@ public class ContainerRestController {
             throw new IllegalArgumentException("userAddress is required");
         }
 
-        EnumSet<ContainerTreeIncludeEnum> includes =
-                ContainerTreeIncludeEnum.fromCsv(include);
+        int safePage = Math.max(DEFAULT_PAGE, page);
+        int safePageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize));
+
+        EnumSet<ContainerTreeIncludeEnum> includes = parseIncludes(include, containerId);
 
         if (defaultPublicDomain.equals(domain)) {
             domain = null;
@@ -72,12 +88,40 @@ public class ContainerRestController {
         return nodeService.getContainerTree(
                 containerId,
                 dataTypeId,
+                dataItemId,
+                dataItemVerificationId,
+                dataItemVerificationVerified,
                 userAddress,
                 domain,
-                page,
-                pageSize,
+                safePage,
+                safePageSize,
                 includes
         );
+    }
+
+    private static EnumSet<ContainerTreeIncludeEnum> parseIncludes(String include, String containerId) {
+        EnumSet<ContainerTreeIncludeEnum> includes = ContainerTreeIncludeEnum.fromCsv(include);
+
+        if (includes.isEmpty()) {
+            boolean singleContainerMode = containerId != null && !containerId.isBlank();
+            if (singleContainerMode) {
+                includes = EnumSet.of(
+                        ContainerTreeIncludeEnum.CONTAINER,
+                        ContainerTreeIncludeEnum.DATA_TYPE,
+                        ContainerTreeIncludeEnum.DATA_ITEM,
+                        ContainerTreeIncludeEnum.DATA_ITEM_VERIFICATION
+                );
+            } else {
+                includes = EnumSet.of(ContainerTreeIncludeEnum.CONTAINER);
+            }
+        } else {
+            includes.add(ContainerTreeIncludeEnum.CONTAINER);
+            if (includes.contains(ContainerTreeIncludeEnum.DATA_ITEM)) {
+                includes.add(ContainerTreeIncludeEnum.DATA_ITEM_VERIFICATION);
+            }
+        }
+
+        return includes;
     }
 
     @GetMapping("/api/containers/{id}")
@@ -101,55 +145,9 @@ public class ContainerRestController {
             @RequestParam String userAddress,
             @RequestParam List<String> containerIds
     ) {
-        int added = 0;
-        int skipped = 0;
-
-        // Get current follow count
-        long currentFollowCount = followedContainerRepository.countByUserAddress(userAddress);
-
-        for (String containerId : containerIds) {
-
-            // Stop when configured follow limit is reached.
-            if (currentFollowCount + added >= maxFollowsPerUser) {
-                skipped += (containerIds.size() - added - skipped);
-                break;
-            }
-
-            // Check whether container exists.
-            Optional<Container> containerOpt = containerRepository.findById(containerId);
-            if (containerOpt.isEmpty()) {
-                skipped++;
-                continue;
-            }
-
-            Container container = containerOpt.get();
-
-            // User cannot follow own container.
-            if (container.getCreator() != null
-                    && Objects.equals(container.getCreator().getCreatorAddr(), userAddress)) {
-                skipped++;
-                continue;
-            }
-
-            // Skip if already followed.
-            boolean alreadyFollowed = followedContainerRepository
-                    .findByUserAddressAndContainerId(userAddress, containerId)
-                    .isPresent();
-            if (alreadyFollowed) {
-                skipped++;
-                continue;
-            }
-
-            // Save new follow.
-            followedContainerRepository.save(new FollowedContainer(userAddress, containerId));
-            added++;
-        }
-
-        return Map.of(
-                "status", "success",
-                "added", added,
-                "skipped", skipped,
-                "maxAllowed", maxFollowsPerUser
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Follow updates are on-chain now. Publish a data item with easy_publish.follow_containers."
         );
     }
 
@@ -159,9 +157,10 @@ public class ContainerRestController {
             @RequestParam String userAddress,
             @RequestParam String containerId
     ) {
-
-        followedContainerRepository
-                .deleteByUserAddressAndContainerId(userAddress, containerId);
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Unfollow is on-chain now. Publish a data item with easy_publish.follow_containers and enabled=false."
+        );
     }
 
     @DeleteMapping("/api/follow-containers")
@@ -169,7 +168,10 @@ public class ContainerRestController {
     public void unfollowAllContainers(
             @RequestParam String userAddress
     ) {
-        followedContainerRepository.deleteByUserAddress(userAddress);
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Bulk unfollow is on-chain now. Publish a data item with easy_publish.follow_containers entries enabled=false."
+        );
     }
 
     @GetMapping("/api/followed-containers")
@@ -178,29 +180,63 @@ public class ContainerRestController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int pageSize
     ) {
+        int safePage = Math.max(DEFAULT_PAGE, page);
+        int safePageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize));
 
-        var pageable = org.springframework.data.domain.PageRequest.of(page, pageSize);
+        List<OffchainFollowContainer> actions =
+                offchainFollowContainerRepository.findByActorAddressOrderBySequenceIndexDescIdDesc(userAddress);
 
-        var pageResult = followedContainerRepository.findByUserAddress(userAddress, pageable);
+        LinkedHashMap<String, Boolean> latestByContainer = new LinkedHashMap<>();
+        for (OffchainFollowContainer action : actions) {
+            String containerId = action.getTargetContainerId();
+            if (containerId == null || latestByContainer.containsKey(containerId)) {
+                continue;
+            }
+            latestByContainer.put(containerId, action.isEnabled());
+        }
 
-        List<String> containerIds = pageResult
-                .getContent()
-                .stream()
-                .map(FollowedContainer::getContainerId)
-                .toList();
+        List<String> activeContainerIds = new ArrayList<>();
+        for (Map.Entry<String, Boolean> entry : latestByContainer.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
+                activeContainerIds.add(entry.getKey());
+            }
+        }
 
-        List<Container> containers = containerRepository.findAllById(containerIds);
+        if (activeContainerIds.isEmpty()) {
+            List<String> fallback = followedContainerRepository.findByUserAddress(userAddress).stream()
+                    .map(FollowedContainer::getContainerId)
+                    .filter(Objects::nonNull)
+                    .toList();
+            activeContainerIds.addAll(fallback);
+        }
 
-        List<Map<String, String>> containerDTOs = containers.stream()
-                .map(c -> Map.of("id", c.getId(), "name", c.getName()))
-                .toList();
+        int totalElements = activeContainerIds.size();
+        int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / safePageSize);
+        int fromIndex = Math.min(safePage * safePageSize, totalElements);
+        int toIndex = Math.min(fromIndex + safePageSize, totalElements);
+
+        List<String> pageContainerIds = activeContainerIds.subList(fromIndex, toIndex);
+        Map<String, Container> containersById = containerRepository.findAllById(pageContainerIds).stream()
+                .collect(LinkedHashMap::new, (map, container) -> map.put(container.getId(), container), Map::putAll);
+
+        List<Map<String, String>> containerDTOs = new ArrayList<>();
+        for (String containerId : pageContainerIds) {
+            Container container = containersById.get(containerId);
+            if (container == null) {
+                continue;
+            }
+            containerDTOs.add(Map.of(
+                    "id", container.getId(),
+                    "name", container.getName() == null ? "" : container.getName()
+            ));
+        }
 
         return Map.of(
                 "content", containerDTOs,
-                "page", pageResult.getNumber(),
-                "pageSize", pageResult.getSize(),
-                "totalElements", pageResult.getTotalElements(),
-                "totalPages", pageResult.getTotalPages()
+                "page", safePage,
+                "pageSize", safePageSize,
+                "totalElements", totalElements,
+                "totalPages", totalPages
         );
     }
 }

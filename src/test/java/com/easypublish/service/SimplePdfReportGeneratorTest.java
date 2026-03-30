@@ -24,6 +24,7 @@ class SimplePdfReportGeneratorTest {
 
         byte[] pdfBytes = SimplePdfReportGenerator.generateCarMaintenanceReport(
                 List.of(maintenance),
+                List.of(),
                 "Data Type ID",
                 "0xabc",
                 LocalDateTime.of(2026, 3, 24, 19, 0)

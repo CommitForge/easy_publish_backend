@@ -75,6 +75,18 @@
             margin-bottom:4px;
         }
 
+        .section-title {
+            margin-top: 14px;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .empty-note {
+            color: #666;
+            font-style: italic;
+        }
+
         /* ---------------------------
            TABLE
         --------------------------- */
@@ -157,6 +169,12 @@
     </tr>
 </table>
 
+<div class="info">
+    <h3 th:text="'Scope: ' + ${reportScope}"></h3>
+</div>
+
+<div class="section-title">Latest Revisions (Maintenance Content)</div>
+
 <table>
 
     <thead>
@@ -173,6 +191,10 @@
 
     <tbody>
 
+    <tr th:if="${#lists.isEmpty(maintenances)}">
+        <td colspan="7" class="empty-note">No maintenance rows found for the requested filter.</td>
+    </tr>
+
     <tr th:each="m : ${maintenances}"
         th:classappend="${m.cost != null} ? 'highlight' : ''">
 
@@ -188,6 +210,28 @@
 
     </tbody>
 
+</table>
+
+<div class="section-title">Previous Revisions (Metadata Only)</div>
+
+<table>
+    <thead>
+    <tr>
+        <th>Date</th>
+        <th>Data Item ID</th>
+        <th>Name</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:if="${#lists.isEmpty(previousRevisions)}">
+        <td colspan="3" class="empty-note">No previous revisions found.</td>
+    </tr>
+    <tr th:each="r : ${previousRevisions}">
+        <td th:text="${r.date != null ? r.date : '-'}"></td>
+        <td th:text="${r.id != null ? r.id : '-'}"></td>
+        <td th:text="${r.name != null ? r.name : '-'}"></td>
+    </tr>
+    </tbody>
 </table>
 
 </body>

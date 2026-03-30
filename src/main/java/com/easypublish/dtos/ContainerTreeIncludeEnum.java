@@ -7,7 +7,8 @@ import java.util.List;
 public enum ContainerTreeIncludeEnum {
     CONTAINER,
     DATA_TYPE,
-    DATA_ITEM;
+    DATA_ITEM,
+    DATA_ITEM_VERIFICATION;
 
 
     // ---------------- single string ----------------
@@ -53,10 +54,10 @@ public enum ContainerTreeIncludeEnum {
 
     // ---------------- internal parser ----------------
     private static ContainerTreeIncludeEnum parse(String raw) {
+        String normalized = raw.trim().toUpperCase();
+
         try {
-            return ContainerTreeIncludeEnum.valueOf(
-                    raw.trim().toUpperCase()
-            );
+            return ContainerTreeIncludeEnum.valueOf(normalized);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(
                     "Invalid include value: " + raw +

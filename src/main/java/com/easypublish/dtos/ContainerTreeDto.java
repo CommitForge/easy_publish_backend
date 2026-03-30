@@ -1,19 +1,20 @@
 package com.easypublish.dtos;
 
-import com.easypublish.entities.onchain.Container;
-import com.easypublish.entities.onchain.DataItem;
-import com.easypublish.entities.onchain.DataType;
-
-
 import java.util.List;
+import java.util.Map;
 
-public class ContainerTreeDto{
+public class ContainerTreeDto {
 
-    List<ContainerNodeDto> containers;
+    private List<ContainerNodeDto> containers;
+    private Map<String, Object> meta;
 
     public ContainerTreeDto(List<ContainerNodeDto> containers) {
-        this.containers = containers;
+        this(containers, Map.of());
+    }
 
+    public ContainerTreeDto(List<ContainerNodeDto> containers, Map<String, Object> meta) {
+        this.containers = containers;
+        this.meta = meta;
     }
 
     public List<ContainerNodeDto> getContainers() {
@@ -22,5 +23,13 @@ public class ContainerTreeDto{
 
     public void setContainers(List<ContainerNodeDto> containers) {
         this.containers = containers;
+    }
+
+    public Map<String, Object> getMeta() {
+        return meta;
+    }
+
+    public void setMeta(Map<String, Object> meta) {
+        this.meta = meta;
     }
 }

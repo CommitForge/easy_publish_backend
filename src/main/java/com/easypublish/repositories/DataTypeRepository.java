@@ -1,6 +1,7 @@
 package com.easypublish.repositories;
 
 import com.easypublish.entities.onchain.DataType;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -19,6 +20,12 @@ public interface DataTypeRepository extends JpaRepository<DataType, String> {
 
     @Query("SELECT d FROM DataType d WHERE d.containerId = :containerId")
     List<DataType> findByContainer(@Param("containerId") String containerId, Pageable pageable);
+
+    @Query(
+            value = "SELECT d FROM DataType d WHERE d.containerId = :containerId",
+            countQuery = "SELECT COUNT(d) FROM DataType d WHERE d.containerId = :containerId"
+    )
+    Page<DataType> findByContainerPage(@Param("containerId") String containerId, Pageable pageable);
 
     // Optional: find all DataType by creator address only
     @Query("SELECT d FROM DataType d WHERE d.creator.creatorAddr = :creatorAddr")
@@ -47,5 +54,27 @@ public interface DataTypeRepository extends JpaRepository<DataType, String> {
     List<DataType> findByContainerAndPublishTargetDomain(
             @Param("containerId") String containerId,
             @Param("domain") String domain
+    );
+
+    @Query(
+            value = """
+                SELECT DISTINCT d
+                FROM DataType d
+                JOIN PublishTarget pt ON pt.dataTypeId = d.id
+                WHERE d.containerId = :containerId
+                  AND pt.domain = :domain
+            """,
+            countQuery = """
+                SELECT COUNT(DISTINCT d.id)
+                FROM DataType d
+                JOIN PublishTarget pt ON pt.dataTypeId = d.id
+                WHERE d.containerId = :containerId
+                  AND pt.domain = :domain
+            """
+    )
+    Page<DataType> findByContainerAndPublishTargetDomainPage(
+            @Param("containerId") String containerId,
+            @Param("domain") String domain,
+            Pageable pageable
     );
 }

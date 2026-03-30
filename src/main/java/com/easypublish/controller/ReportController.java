@@ -34,21 +34,25 @@ public class ReportController {
             @RequestParam(required = false) String dataItemId,
             @RequestParam(required = false) String dataTypeId) throws Exception {
 
-        List<CarMaintenance> maintenances;
+        ReportService.CarReportPayload reportPayload;
 
-        if (dataItemId != null) {
-            maintenances = reportService.getCarMaintenances(dataItemId);
-        } else if (dataTypeId != null) {
-            maintenances = reportService.getCarMaintenancesByType(dataTypeId);
+        if (dataItemId != null && !dataItemId.isBlank()) {
+            reportPayload = reportService.getCarReportByDataItem(dataItemId);
+        } else if (dataTypeId != null && !dataTypeId.isBlank()) {
+            reportPayload = reportService.getCarReportByType(dataTypeId);
         } else {
             throw new IllegalArgumentException("Either dataItemId or dataTypeId must be provided");
         }
 
+        List<CarMaintenance> maintenances = reportPayload.getMaintenances();
+        List<ReportService.RevisionMetadata> previousRevisions = reportPayload.getPreviousRevisions();
+
         Context context = new Context();
         context.setVariable("maintenances", maintenances);
+        context.setVariable("previousRevisions", previousRevisions);
 
-        String reportId = dataItemId != null ? dataItemId : dataTypeId;
-        String idLabel = dataItemId != null ? "Data Item ID" : "Data Type ID";
+        String reportId = dataItemId != null && !dataItemId.isBlank() ? dataItemId : dataTypeId;
+        String idLabel = dataItemId != null && !dataItemId.isBlank() ? "Data Item ID" : "Data Type ID";
 
         context.setVariable("reportId", reportId);
         context.setVariable("idLabel", idLabel);
@@ -57,14 +61,15 @@ public class ReportController {
         context.setVariable("logoPath", "classpath:/templates/images/logo-cars.png");
 
         context.setVariable("reportScope",
-                dataItemId != null
+                dataItemId != null && !dataItemId.isBlank()
                         ? "Single Maintenance Record"
-                        : "Full Maintenance History");
+                        : "Latest Revision Snapshot");
 
         byte[] pdfBytes;
         if (isNativeImageRuntime()) {
             pdfBytes = SimplePdfReportGenerator.generateCarMaintenanceReport(
                     maintenances,
+                    previousRevisions,
                     idLabel,
                     reportId,
                     context.getVariable("generatedAt")

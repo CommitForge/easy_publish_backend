@@ -8,19 +8,28 @@ import java.util.List;
 public class DataItemNodeDto {
 
     private final DataItem dataItem;
-    private final List<DataItemVerification> verifications;
+    private final List<DataItemVerification> dataItemVerifications;
+    private final DataItemRevisionDto revision;
 
-    public DataItemNodeDto(DataItem dataItem,
-                           List<DataItemVerification> verifications) {
+    public DataItemNodeDto(
+            DataItem dataItem,
+            List<DataItemVerification> dataItemVerifications,
+            DataItemRevisionDto revision
+    ) {
         this.dataItem = dataItem;
-        this.verifications = verifications;
+        this.dataItemVerifications = dataItemVerifications;
+        this.revision = revision;
     }
 
     public DataItem getDataItem() {
         return dataItem;
     }
 
-    public List<DataItemVerification> getVerifications() {
-        return verifications;
+    public List<DataItemVerification> getDataItemVerifications() {
+        return dataItemVerifications;
+    }
+
+    public DataItemRevisionDto getRevision() {
+        return revision;
     }
 }

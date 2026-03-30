@@ -26,17 +26,21 @@ public final class SimplePdfReportGenerator {
 
     public static byte[] generateCarMaintenanceReport(
             List<CarMaintenance> maintenances,
+            List<ReportService.RevisionMetadata> previousRevisions,
             String idLabel,
             String reportId,
             Object generatedAt
     ) {
         List<CarMaintenance> rows = maintenances != null ? maintenances : List.of();
+        List<ReportService.RevisionMetadata> revisionRows =
+                previousRevisions != null ? previousRevisions : List.of();
 
         List<String> lines = new ArrayList<>();
         lines.add("Car Maintenance Report");
         lines.add("Generated: " + safe(generatedAt));
         lines.add(idLabel + ": " + safe(reportId));
         lines.add("");
+        lines.add("Latest Revisions (Maintenance Content)");
         lines.add(headerRow());
         lines.add(repeat('-', 164));
 
@@ -46,6 +50,19 @@ public final class SimplePdfReportGenerator {
 
         if (rows.isEmpty()) {
             lines.add("No maintenance rows found for the requested filter.");
+        }
+
+        lines.add("");
+        lines.add("Previous Revisions (Metadata Only)");
+        lines.add(revisionHeaderRow());
+        lines.add(repeat('-', 156));
+
+        for (ReportService.RevisionMetadata revision : revisionRows) {
+            lines.add(formatRevisionRow(revision));
+        }
+
+        if (revisionRows.isEmpty()) {
+            lines.add("No previous revisions found.");
         }
 
         List<String> pageStreams = buildPageStreams(lines);
@@ -175,6 +192,12 @@ public final class SimplePdfReportGenerator {
                 + " | " + pad("Note", 40);
     }
 
+    private static String revisionHeaderRow() {
+        return pad("Date", 12)
+                + " | " + pad("Data Item ID", 68)
+                + " | " + pad("Name", 70);
+    }
+
     private static String formatRow(CarMaintenance m) {
         return pad(m.getDate(), 12)
                 + " | " + pad(m.getDistance(), 12)
@@ -183,6 +206,12 @@ public final class SimplePdfReportGenerator {
                 + " | " + pad(m.getCost(), 10)
                 + " | " + pad(m.getPerformedBy(), 24)
                 + " | " + pad(m.getNote(), 40);
+    }
+
+    private static String formatRevisionRow(ReportService.RevisionMetadata revision) {
+        return pad(revision.getDate(), 12)
+                + " | " + pad(revision.getId(), 68)
+                + " | " + pad(revision.getName(), 70);
     }
 
     private static String pad(String value, int maxLen) {

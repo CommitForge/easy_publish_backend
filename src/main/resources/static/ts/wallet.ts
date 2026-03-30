@@ -18,10 +18,37 @@ function normalizeId(id: any): string | null {
 }
 
 /**
- * Fetch container items from your backend API
+ * Flexible /api/items query used by frontend tree views.
  */
-export async function fetchContainerItems(containerId: string, type: string) {
-    const res = await fetch(`/api/items?containerId=${containerId}&type=${type}`);
+export interface ItemsQuery {
+    userAddress: string;
+    include?: string;
+    containerId?: string;
+    dataTypeId?: string;
+    dataItemId?: string;
+    dataItemVerificationId?: string;
+    dataItemVerificationVerified?: boolean;
+    domain?: string;
+    page?: number;
+    pageSize?: number;
+}
+
+export async function fetchContainerItems(query: ItemsQuery) {
+    const params = new URLSearchParams();
+    params.set('userAddress', query.userAddress);
+    if (query.include) params.set('include', query.include);
+    if (query.containerId) params.set('containerId', query.containerId);
+    if (query.dataTypeId) params.set('dataTypeId', query.dataTypeId);
+    if (query.dataItemId) params.set('dataItemId', query.dataItemId);
+    if (query.dataItemVerificationId) params.set('dataItemVerificationId', query.dataItemVerificationId);
+    if (query.dataItemVerificationVerified !== undefined) {
+        params.set('dataItemVerificationVerified', String(query.dataItemVerificationVerified));
+    }
+    if (query.domain) params.set('domain', query.domain);
+    params.set('page', String(query.page ?? 0));
+    params.set('pageSize', String(query.pageSize ?? 20));
+
+    const res = await fetch(`/api/items?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to fetch items');
     return await res.json();
 }

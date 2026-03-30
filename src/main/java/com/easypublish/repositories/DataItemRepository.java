@@ -90,4 +90,6 @@ WHERE di.containerId = :containerId
 
     List<DataItem> findByDataTypeId(String dataTypeId);
 
+    Optional<DataItem> findByIdAndContainerId(String id, String containerId);
+
 }

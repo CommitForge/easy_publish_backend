@@ -4,6 +4,7 @@ import com.easypublish.entities.sync.SyncProgress;
 import com.easypublish.entities.onchain.*;
 import com.easypublish.parsed.EasyPublishParser;
 import com.easypublish.repositories.*;
+import com.easypublish.service.EasyPublishOffchainIndexService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -52,6 +53,8 @@ public class IotaDataSync {
     private DataTypeRepository dataTypeRepository;
     @Autowired
     private EasyPublishParser easyPublishParser;
+    @Autowired
+    private EasyPublishOffchainIndexService easyPublishOffchainIndexService;
     @Autowired
     private ContainerRepository containerRepository;
     @PostConstruct
@@ -510,6 +513,7 @@ public class IotaDataSync {
             // --------------------------------------------------
             JsonNode chainJson = fetchObjectData(updateChainId, "update_chain");
             if (chainJson == null || chainJson.isEmpty()) {
+                runOffchainReindex();
                 markSyncSuccess(progress);
                 return;
             }
@@ -517,6 +521,7 @@ public class IotaDataSync {
             String currentUpdateId = getIdOrNull(chainJson.path("fields"), "last_update_record_id");
 
             if (currentUpdateId == null || currentUpdateId.isBlank()) {
+                runOffchainReindex();
                 markSyncSuccess(progress);
                 return;
             }
@@ -590,6 +595,8 @@ public class IotaDataSync {
                 }
             }
 
+            runOffchainReindex();
+
             // ✅ If we reach here → everything succeeded
             markSyncSuccess(progress);
 
@@ -601,6 +608,25 @@ public class IotaDataSync {
             throw ex;
         }
     }
+
+    private void runOffchainReindex() {
+        EasyPublishOffchainIndexService.IndexSummary summary =
+                easyPublishOffchainIndexService.reindexAllDataItems();
+
+        if (summary.skipped()) {
+            System.out.println("[SYNC] EasyPublish offchain index skipped: " + summary.message());
+            return;
+        }
+
+        System.out.println(
+                "[SYNC] EasyPublish offchain index refreshed. dataItems=" + summary.scannedDataItems()
+                        + ", followActions=" + summary.followActions()
+                        + ", activeFollows=" + summary.activeFollows()
+                        + ", revisions=" + summary.revisionRows()
+                        + ", maintenances=" + summary.maintenanceRows()
+        );
+    }
+
     /**
      * Ensure all 4 chains exist with the provided IDs.
      * Non-null fields initialized to safe defaults to prevent DB constraint issues.
@@ -653,23 +679,23 @@ public class IotaDataSync {
                 break;
 
             case "DataItemVerificationChain":
-                DataItemVerificationChain verification = onchainDataItemVerificationChainRepository
+                DataItemVerificationChain dataItemVerificationChain = onchainDataItemVerificationChainRepository
                         .findById(objectId)
                         .orElse(new DataItemVerificationChain());
 
-                verification.setId(objectId);
-                BigInteger verificationIndex = getBigIntOrNull(fields, "last_data_item_verefication_index");
-                if (verificationIndex == null) {
-                    verificationIndex = getBigIntOrNull(fields, "last_data_item_verification_index");
+                dataItemVerificationChain.setId(objectId);
+                BigInteger dataItemVerificationIndex = getBigIntOrNull(fields, "last_data_item_verefication_index");
+                if (dataItemVerificationIndex == null) {
+                    dataItemVerificationIndex = getBigIntOrNull(fields, "last_data_item_verification_index");
                 }
-                verification.setLastDataItemVerificationIndex(verificationIndex);
+                dataItemVerificationChain.setLastDataItemVerificationIndex(dataItemVerificationIndex);
 
-                String verificationId = getIdOrNull(fields, "last_data_item_verefication_id");
-                if (verificationId == null) {
-                    verificationId = getIdOrNull(fields, "last_data_item_verification_id");
+                String dataItemVerificationId = getIdOrNull(fields, "last_data_item_verefication_id");
+                if (dataItemVerificationId == null) {
+                    dataItemVerificationId = getIdOrNull(fields, "last_data_item_verification_id");
                 }
-                verification.setLastDataItemVerificationId(verificationId);
-                onchainDataItemVerificationChainRepository.save(verification);
+                dataItemVerificationChain.setLastDataItemVerificationId(dataItemVerificationId);
+                onchainDataItemVerificationChainRepository.save(dataItemVerificationChain);
                 break;
         }
     }
