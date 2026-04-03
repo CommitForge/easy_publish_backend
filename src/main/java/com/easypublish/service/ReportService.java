@@ -40,7 +40,6 @@ public class ReportService {
             "previous_data_item_ids",
             "of",
             "items",
-            "references",
             "revisionOf",
             "revision_of"
     );
@@ -129,8 +128,7 @@ public class ReportService {
 
         RevisionExtraction extraction = extractIndexedRevisionExtraction(dataItem);
         if (!extraction.enabled()) {
-            List<String> referenceIds = normalizeObjectIds(dataItem.getReferences());
-            extraction = extractRevisionExtraction(dataItem.getContent(), referenceIds);
+            extraction = extractRevisionExtraction(dataItem.getContent());
         }
 
         if (!extraction.enabled() || extraction.replaces().isEmpty()) {
@@ -171,8 +169,7 @@ public class ReportService {
         for (DataItem item : dataItemsById.values()) {
             RevisionExtraction extraction = extractIndexedRevisionExtraction(item, indexedRevisionsByDataItemId);
             if (!extraction.enabled()) {
-                List<String> referenceIds = normalizeObjectIds(item.getReferences());
-                extraction = extractRevisionExtraction(item.getContent(), referenceIds);
+                extraction = extractRevisionExtraction(item.getContent());
             }
             if (!extraction.enabled()) {
                 continue;
@@ -211,16 +208,22 @@ public class ReportService {
     }
 
     private RevisionExtraction extractIndexedRevisionExtraction(List<OffchainDataItemRevision> rows) {
-        if (rows == null || rows.isEmpty()) {
+        List<OffchainDataItemRevision> effectiveRows = rows == null
+                ? List.of()
+                : rows.stream()
+                        .filter(row -> !isReferenceDerivedRevisionRow(row))
+                        .toList();
+
+        if (effectiveRows.isEmpty()) {
             return new RevisionExtraction(false, List.of());
         }
 
-        boolean enabled = rows.stream().anyMatch(OffchainDataItemRevision::isEnabled);
+        boolean enabled = effectiveRows.stream().anyMatch(OffchainDataItemRevision::isEnabled);
         if (!enabled) {
             return new RevisionExtraction(false, List.of());
         }
 
-        List<String> replaces = rows.stream()
+        List<String> replaces = effectiveRows.stream()
                 .map(OffchainDataItemRevision::getReplacedDataItemId)
                 .filter(Objects::nonNull)
                 .filter(id -> !id.isBlank())
@@ -230,7 +233,15 @@ public class ReportService {
         return new RevisionExtraction(true, replaces);
     }
 
-    private RevisionExtraction extractRevisionExtraction(String content, List<String> referenceIds) {
+    private static boolean isReferenceDerivedRevisionRow(OffchainDataItemRevision row) {
+        if (row == null) {
+            return false;
+        }
+        String source = row.getSource();
+        return source != null && "references".equalsIgnoreCase(source.trim());
+    }
+
+    private RevisionExtraction extractRevisionExtraction(String content) {
         if (content == null || content.isBlank()) {
             return new RevisionExtraction(false, List.of());
         }
@@ -258,7 +269,7 @@ public class ReportService {
                 if (!revisionsEnabled) {
                     return new RevisionExtraction(false, List.of());
                 }
-                return new RevisionExtraction(true, referenceIds);
+                return new RevisionExtraction(true, List.of());
             }
 
             if (revisionsObject instanceof Map<?, ?> revisionsMap) {
@@ -276,19 +287,11 @@ public class ReportService {
                     explicitPreviousIds.addAll(normalizeObjectIds(revisionsMap.get(key)));
                 }
 
-                List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                        ? referenceIds
-                        : normalizeObjectIds(explicitPreviousIds);
-
-                return new RevisionExtraction(true, effectivePreviousIds);
+                return new RevisionExtraction(true, normalizeObjectIds(explicitPreviousIds));
             }
 
             List<String> explicitPreviousIds = normalizeObjectIds(revisionsObject);
-            List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                    ? referenceIds
-                    : explicitPreviousIds;
-
-            return new RevisionExtraction(true, effectivePreviousIds);
+            return new RevisionExtraction(true, explicitPreviousIds);
         } catch (Exception ignored) {
             return new RevisionExtraction(false, List.of());
         }

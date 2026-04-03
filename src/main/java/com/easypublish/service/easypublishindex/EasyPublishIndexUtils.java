@@ -25,7 +25,6 @@ public final class EasyPublishIndexUtils {
             "previous_data_item_ids",
             "of",
             "items",
-            "references",
             "revisionOf",
             "revision_of"
     );

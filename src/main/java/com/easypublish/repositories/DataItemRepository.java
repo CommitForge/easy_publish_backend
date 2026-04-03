@@ -32,6 +32,21 @@ WHERE di.containerId = :containerId
             @Param("domain") String domain,   // pass null to get all domains
             Pageable pageable
     );
+
+    @Query("""
+SELECT DISTINCT di
+FROM DataItem di
+LEFT JOIN PublishTarget pt
+    ON pt.dataItemId = di.id
+WHERE di.containerId = :containerId
+  AND di.dataTypeId IN :dataTypeIds
+  AND (:domain IS NULL OR pt.domain = :domain)
+""")
+    List<DataItem> findByContainerIdAndDataTypeIdInAndOptionalDomain(
+            @Param("containerId") String containerId,
+            @Param("dataTypeIds") List<String> dataTypeIds,
+            @Param("domain") String domain
+    );
     /**
      * All data items by creator
      */

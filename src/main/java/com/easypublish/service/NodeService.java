@@ -35,15 +35,19 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -71,10 +75,44 @@ public class NodeService {
             "previous_data_item_ids",
             "of",
             "items",
-            "references",
             "revisionOf",
             "revision_of"
     );
+    private static final EnumSet<DataItemSearchField> DEFAULT_DATA_ITEM_SEARCH_FIELDS = EnumSet.of(
+            DataItemSearchField.NAME,
+            DataItemSearchField.DESCRIPTION,
+            DataItemSearchField.EXTERNAL_ID,
+            DataItemSearchField.EXTERNAL_INDEX
+    );
+
+    private enum DataItemSearchField {
+        NAME,
+        DESCRIPTION,
+        CONTENT,
+        EXTERNAL_ID,
+        EXTERNAL_INDEX,
+        OBJECT_ID,
+        DATA_TYPE,
+        CREATOR_ADDR
+    }
+
+    private enum DataItemSortBy {
+        CREATED,
+        NAME,
+        EXTERNAL_INDEX,
+        EXTERNAL_ID
+    }
+
+    private record DataItemFilterOptions(
+            String query,
+            EnumSet<DataItemSearchField> searchFields,
+            Boolean verified,
+            Boolean hasRevisions,
+            Boolean hasVerifications,
+            String dataType,
+            DataItemSortBy sortBy,
+            boolean sortAscending
+    ) {}
 
     private record RevisionExtraction(boolean enabled, List<String> replaces) {}
 
@@ -365,6 +403,14 @@ public class NodeService {
             String dataItemId,
             String dataItemVerificationId,
             Boolean dataItemVerificationVerified,
+            String dataItemQuery,
+            String dataItemSearchFields,
+            Boolean dataItemVerified,
+            Boolean dataItemHasRevisions,
+            Boolean dataItemHasVerifications,
+            String dataItemDataType,
+            String dataItemSortBy,
+            String dataItemSortDirection,
             String creatorAddr,
             String domain,
             int page,
@@ -388,6 +434,16 @@ public class NodeService {
         String normalizedDataTypeId = normalizeBlank(dataTypeId);
         String normalizedDataItemId = normalizeBlank(dataItemId);
         String normalizedDataItemVerificationId = normalizeBlank(dataItemVerificationId);
+        DataItemFilterOptions dataItemFilters = parseDataItemFilterOptions(
+                dataItemQuery,
+                dataItemSearchFields,
+                dataItemVerified,
+                dataItemHasRevisions,
+                dataItemHasVerifications,
+                dataItemDataType,
+                dataItemSortBy,
+                dataItemSortDirection
+        );
 
         if (normalizedContainerId == null) {
             Pageable pageable = PageRequest.of(page, pageSize);
@@ -409,6 +465,14 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    dataItemFilters.query(),
+                    toSearchFieldsCsv(dataItemFilters.searchFields()),
+                    dataItemFilters.verified(),
+                    dataItemFilters.hasRevisions(),
+                    dataItemFilters.hasVerifications(),
+                    dataItemFilters.dataType(),
+                    dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
+                    dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
                     containerPage.getTotalElements(),
                     containerNodes.size(),
@@ -437,6 +501,14 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    dataItemFilters.query(),
+                    toSearchFieldsCsv(dataItemFilters.searchFields()),
+                    dataItemFilters.verified(),
+                    dataItemFilters.hasRevisions(),
+                    dataItemFilters.hasVerifications(),
+                    dataItemFilters.dataType(),
+                    dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
+                    dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
                     1L,
                     1L,
@@ -496,6 +568,14 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    dataItemFilters.query(),
+                    toSearchFieldsCsv(dataItemFilters.searchFields()),
+                    dataItemFilters.verified(),
+                    dataItemFilters.hasRevisions(),
+                    dataItemFilters.hasVerifications(),
+                    dataItemFilters.dataType(),
+                    dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
+                    dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
                     1L,
                     1L,
@@ -510,66 +590,99 @@ public class NodeService {
             return new ContainerTreeDto(List.of(new ContainerNodeDto(container, typeNodes)), meta);
         }
 
-        List<DataItem> items;
-        long totalDataItems;
-        int totalPages;
-        boolean hasNext;
+        Map<String, DataType> dataTypesById = allMatchingDataTypes.stream()
+                .collect(Collectors.toMap(
+                        DataType::getId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
 
+        List<DataItem> candidateItems;
         if (normalizedDataItemId != null) {
-            items = resolveSingleDataItem(
+            candidateItems = resolveSingleDataItem(
                     normalizedContainerId,
                     dataTypeIds,
                     normalizedDataItemId,
                     normalizedDomain
             );
-            totalDataItems = items.size();
-            totalPages = totalDataItems > 0 ? 1 : 0;
-            hasNext = false;
         } else if (dataTypeIds.isEmpty()) {
-            items = List.of();
-            totalDataItems = 0;
-            totalPages = 0;
-            hasNext = false;
+            candidateItems = List.of();
         } else {
-            Page<DataItem> itemPage = dataItemRepository.findByContainerIdAndDataTypeIdInAndOptionalDomain(
+            candidateItems = dataItemRepository.findByContainerIdAndDataTypeIdInAndOptionalDomain(
                     normalizedContainerId,
                     dataTypeIds,
-                    normalizedDomain,
-                    PageRequest.of(page, pageSize)
+                    normalizedDomain
             );
-            items = itemPage.getContent();
-            totalDataItems = itemPage.getTotalElements();
-            totalPages = itemPage.getTotalPages();
-            hasNext = itemPage.hasNext();
         }
 
-        List<String> itemIds = items.stream().map(DataItem::getId).toList();
-        List<DataItemVerification> dataItemVerifications = includeDataItemVerifications && !itemIds.isEmpty()
-                ? dataItemVerificationRepository.findByDataItemIdIn(itemIds)
-                : List.of();
+        List<String> candidateItemIds = candidateItems.stream().map(DataItem::getId).toList();
+        boolean needsVerifications =
+                includeDataItemVerifications
+                        || normalizedDataItemVerificationId != null
+                        || dataItemVerificationVerified != null
+                        || dataItemFilters.hasVerifications() != null;
+
+        List<DataItemVerification> filteredDataItemVerifications =
+                needsVerifications && !candidateItemIds.isEmpty()
+                        ? dataItemVerificationRepository.findByDataItemIdIn(candidateItemIds)
+                        : List.of();
 
         if (normalizedDataItemVerificationId != null) {
-            dataItemVerifications = dataItemVerifications.stream()
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
                     .filter(v -> normalizedDataItemVerificationId.equals(v.getId()))
                     .toList();
         }
 
         if (dataItemVerificationVerified != null) {
-            dataItemVerifications = dataItemVerifications.stream()
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
                     .filter(v -> Objects.equals(dataItemVerificationVerified, v.getVerified()))
                     .toList();
         }
 
-        Map<String, List<DataItemVerification>> dataItemVerificationsByItemId = dataItemVerifications.stream()
+        Map<String, List<DataItemVerification>> dataItemVerificationsByItemId = filteredDataItemVerifications.stream()
                 .collect(Collectors.groupingBy(DataItemVerification::getDataItemId));
 
         boolean dataItemVerificationFiltered =
                 normalizedDataItemVerificationId != null || dataItemVerificationVerified != null;
-        if (dataItemVerificationFiltered) {
-            items = items.stream()
-                    .filter(di -> !dataItemVerificationsByItemId.getOrDefault(di.getId(), List.of()).isEmpty())
-                    .toList();
-        }
+
+        Map<String, DataItemRevisionDto> revisionDtoCache = new HashMap<>();
+        Function<DataItem, DataItemRevisionDto> revisionResolver =
+                dataItem -> revisionDtoCache.computeIfAbsent(dataItem.getId(), ignored -> buildRevisionDto(dataItem));
+
+        List<DataItem> filteredItems = candidateItems.stream()
+                .filter(di ->
+                        !dataItemVerificationFiltered
+                                || !dataItemVerificationsByItemId.getOrDefault(di.getId(), List.of()).isEmpty()
+                )
+                .filter(di -> matchesDataItemFilters(
+                        di,
+                        dataTypesById,
+                        dataItemVerificationsByItemId,
+                        revisionResolver,
+                        dataItemFilters
+                ))
+                .toList();
+
+        List<DataItem> orderedItems = sortDataItems(filteredItems, dataItemFilters);
+
+        long totalDataItems = orderedItems.size();
+        int totalPages = totalDataItems == 0 ? 0 : (int) Math.ceil((double) totalDataItems / pageSize);
+        int fromIndex = Math.min(page * pageSize, orderedItems.size());
+        int toIndex = Math.min(fromIndex + pageSize, orderedItems.size());
+        boolean hasNext = toIndex < orderedItems.size();
+        List<DataItem> items = orderedItems.subList(fromIndex, toIndex);
+
+        List<String> itemIds = items.stream().map(DataItem::getId).toList();
+        Map<String, List<DataItemVerification>> pagedVerificationsByItemId = includeDataItemVerifications
+                ? itemIds.stream().collect(Collectors.toMap(
+                        Function.identity(),
+                        id -> dataItemVerificationsByItemId.getOrDefault(id, List.of()),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ))
+                : Map.of();
+
         Map<String, List<DataItem>> itemsByTypeId = items.stream()
                 .collect(Collectors.groupingBy(DataItem::getDataTypeId));
 
@@ -591,9 +704,9 @@ public class NodeService {
                             .map(di -> new DataItemNodeDto(
                                     di,
                                     includeDataItemVerifications
-                                            ? dataItemVerificationsByItemId.getOrDefault(di.getId(), List.of())
+                                            ? pagedVerificationsByItemId.getOrDefault(di.getId(), List.of())
                                             : List.of(),
-                                    buildRevisionDto(di)
+                                    revisionResolver.apply(di)
                             ))
                             .toList();
 
@@ -617,6 +730,14 @@ public class NodeService {
                 normalizedDataItemId,
                 normalizedDataItemVerificationId,
                 dataItemVerificationVerified,
+                dataItemFilters.query(),
+                toSearchFieldsCsv(dataItemFilters.searchFields()),
+                dataItemFilters.verified(),
+                dataItemFilters.hasRevisions(),
+                dataItemFilters.hasVerifications(),
+                dataItemFilters.dataType(),
+                dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
+                dataItemFilters.sortAscending() ? "asc" : "desc",
                 normalizedDomain,
                 1L,
                 1L,
@@ -625,9 +746,20 @@ public class NodeService {
                 returnedDataItemVerifications,
                 totalPages,
                 hasNext,
-                dataItemVerificationFiltered
+                false
         );
         meta.put("returnedDataItems", returnedItems);
+        meta.put(
+                "availableDataTypes",
+                allMatchingDataTypes.stream()
+                        .map(DataType::getName)
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(name -> !name.isEmpty())
+                        .distinct()
+                        .sorted(String.CASE_INSENSITIVE_ORDER)
+                        .toList()
+        );
 
         return new ContainerTreeDto(List.of(new ContainerNodeDto(container, typeNodes)), meta);
     }
@@ -642,6 +774,237 @@ public class NodeService {
             String dataTypeId
     ) {
         return nodeQueryService.findByType(type, creatorAddr, containerId, dataTypeId);
+    }
+
+    private static DataItemFilterOptions parseDataItemFilterOptions(
+            String query,
+            String searchFieldsCsv,
+            Boolean verified,
+            Boolean hasRevisions,
+            Boolean hasVerifications,
+            String dataType,
+            String sortByRaw,
+            String sortDirectionRaw
+    ) {
+        String normalizedQuery = normalizeBlank(query);
+        String normalizedDataType = normalizeBlank(dataType);
+        EnumSet<DataItemSearchField> searchFields = parseDataItemSearchFields(searchFieldsCsv);
+        DataItemSortBy sortBy = parseDataItemSortBy(sortByRaw);
+        boolean sortAscending = parseDataItemSortAscending(sortDirectionRaw);
+
+        return new DataItemFilterOptions(
+                normalizedQuery,
+                searchFields,
+                verified,
+                hasRevisions,
+                hasVerifications,
+                normalizedDataType,
+                sortBy,
+                sortAscending
+        );
+    }
+
+    private static EnumSet<DataItemSearchField> parseDataItemSearchFields(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return EnumSet.copyOf(DEFAULT_DATA_ITEM_SEARCH_FIELDS);
+        }
+
+        EnumSet<DataItemSearchField> parsed = EnumSet.noneOf(DataItemSearchField.class);
+        for (String token : csv.split(",")) {
+            String normalized = token == null ? "" : token.trim().toLowerCase(Locale.ROOT);
+            switch (normalized) {
+                case "name" -> parsed.add(DataItemSearchField.NAME);
+                case "description" -> parsed.add(DataItemSearchField.DESCRIPTION);
+                case "content", "body", "payload" -> parsed.add(DataItemSearchField.CONTENT);
+                case "externalid", "external_id", "external-id" -> parsed.add(DataItemSearchField.EXTERNAL_ID);
+                case "externalindex", "external_index", "external-index" ->
+                        parsed.add(DataItemSearchField.EXTERNAL_INDEX);
+                case "objectid", "object_id", "object-id", "id" -> parsed.add(DataItemSearchField.OBJECT_ID);
+                case "datatype", "data_type", "data-type", "type" -> parsed.add(DataItemSearchField.DATA_TYPE);
+                case "creator", "creatoraddr", "creator_addr", "creator-addr" ->
+                        parsed.add(DataItemSearchField.CREATOR_ADDR);
+                default -> {
+                    // Ignore unknown values for forward compatibility.
+                }
+            }
+        }
+
+        return parsed.isEmpty() ? EnumSet.copyOf(DEFAULT_DATA_ITEM_SEARCH_FIELDS) : parsed;
+    }
+
+    private static DataItemSortBy parseDataItemSortBy(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DataItemSortBy.CREATED;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "name" -> DataItemSortBy.NAME;
+            case "externalindex", "external_index", "external-index" -> DataItemSortBy.EXTERNAL_INDEX;
+            case "externalid", "external_id", "external-id" -> DataItemSortBy.EXTERNAL_ID;
+            case "created", "createdonchain", "created_on_chain", "created-on-chain" -> DataItemSortBy.CREATED;
+            default -> DataItemSortBy.CREATED;
+        };
+    }
+
+    private static boolean parseDataItemSortAscending(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return false;
+        }
+        return "asc".equalsIgnoreCase(raw.trim());
+    }
+
+    private static String toSearchFieldsCsv(EnumSet<DataItemSearchField> searchFields) {
+        List<String> values = new ArrayList<>();
+        if (searchFields.contains(DataItemSearchField.NAME)) values.add("name");
+        if (searchFields.contains(DataItemSearchField.DESCRIPTION)) values.add("description");
+        if (searchFields.contains(DataItemSearchField.CONTENT)) values.add("content");
+        if (searchFields.contains(DataItemSearchField.EXTERNAL_ID)) values.add("externalId");
+        if (searchFields.contains(DataItemSearchField.EXTERNAL_INDEX)) values.add("externalIndex");
+        if (searchFields.contains(DataItemSearchField.OBJECT_ID)) values.add("objectId");
+        if (searchFields.contains(DataItemSearchField.DATA_TYPE)) values.add("dataType");
+        if (searchFields.contains(DataItemSearchField.CREATOR_ADDR)) values.add("creatorAddr");
+        return String.join(",", values);
+    }
+
+    private static List<DataItem> sortDataItems(
+            List<DataItem> items,
+            DataItemFilterOptions options
+    ) {
+        Comparator<DataItem> comparator = (left, right) -> {
+            int ordered = compareNullableSortValues(
+                    dataItemSortValue(left, options.sortBy()),
+                    dataItemSortValue(right, options.sortBy()),
+                    options.sortAscending()
+            );
+            if (ordered != 0) return ordered;
+            return normalizeText(left.getId()).compareTo(normalizeText(right.getId()));
+        };
+
+        return items.stream().sorted(comparator).toList();
+    }
+
+    private static Comparable<?> dataItemSortValue(
+            DataItem dataItem,
+            DataItemSortBy sortBy
+    ) {
+        return switch (sortBy) {
+            case CREATED -> dataItem.getSequenceIndex();
+            case NAME -> normalizeText(dataItem.getName());
+            case EXTERNAL_INDEX -> dataItem.getExternalIndex();
+            case EXTERNAL_ID -> normalizeText(dataItem.getExternalId());
+        };
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static int compareNullableSortValues(Comparable left, Comparable right, boolean ascending) {
+        if (left == null && right == null) return 0;
+        if (left == null) return 1;
+        if (right == null) return -1;
+        int compared = left.compareTo(right);
+        return ascending ? compared : -compared;
+    }
+
+    private static boolean matchesDataItemFilters(
+            DataItem dataItem,
+            Map<String, DataType> dataTypesById,
+            Map<String, List<DataItemVerification>> dataItemVerificationsByItemId,
+            Function<DataItem, DataItemRevisionDto> revisionResolver,
+            DataItemFilterOptions options
+    ) {
+        if (options.verified() != null) {
+            boolean isVerified = Boolean.TRUE.equals(dataItem.isVerified());
+            if (!Objects.equals(options.verified(), isVerified)) {
+                return false;
+            }
+        }
+
+        if (options.hasRevisions() != null) {
+            DataItemRevisionDto revision = revisionResolver.apply(dataItem);
+            boolean hasRevisions = revision != null
+                    && revision.isEnabled()
+                    && revision.getReplaces() != null
+                    && !revision.getReplaces().isEmpty();
+            if (!Objects.equals(options.hasRevisions(), hasRevisions)) {
+                return false;
+            }
+        }
+
+        if (options.hasVerifications() != null) {
+            boolean hasVerifications = !dataItemVerificationsByItemId
+                    .getOrDefault(dataItem.getId(), List.of())
+                    .isEmpty();
+            if (!Objects.equals(options.hasVerifications(), hasVerifications)) {
+                return false;
+            }
+        }
+
+        DataType dataType = dataTypesById.get(dataItem.getDataTypeId());
+        if (options.dataType() != null) {
+            String dataTypeName = normalizeText(dataType == null ? null : dataType.getName());
+            if (!normalizeText(options.dataType()).equals(dataTypeName)) {
+                return false;
+            }
+        }
+
+        if (options.query() == null) {
+            return true;
+        }
+
+        return matchesSearchQuery(dataItem, dataType, options.query(), options.searchFields());
+    }
+
+    private static boolean matchesSearchQuery(
+            DataItem dataItem,
+            DataType dataType,
+            String query,
+            EnumSet<DataItemSearchField> searchFields
+    ) {
+        String[] tokens = normalizeText(query).split("\\s+");
+        List<String> nonBlankTokens = new ArrayList<>();
+        for (String token : tokens) {
+            if (!token.isBlank()) {
+                nonBlankTokens.add(token);
+            }
+        }
+        if (nonBlankTokens.isEmpty()) {
+            return true;
+        }
+
+        List<String> values = new ArrayList<>();
+        if (searchFields.contains(DataItemSearchField.NAME)) {
+            values.add(normalizeText(dataItem.getName()));
+        }
+        if (searchFields.contains(DataItemSearchField.DESCRIPTION)) {
+            values.add(normalizeText(dataItem.getDescription()));
+        }
+        if (searchFields.contains(DataItemSearchField.CONTENT)) {
+            values.add(normalizeText(dataItem.getContent()));
+        }
+        if (searchFields.contains(DataItemSearchField.EXTERNAL_ID)) {
+            values.add(normalizeText(dataItem.getExternalId()));
+        }
+        if (searchFields.contains(DataItemSearchField.EXTERNAL_INDEX)) {
+            BigInteger externalIndex = dataItem.getExternalIndex();
+            values.add(externalIndex == null ? "" : externalIndex.toString().toLowerCase(Locale.ROOT));
+        }
+        if (searchFields.contains(DataItemSearchField.OBJECT_ID)) {
+            values.add(normalizeText(dataItem.getId()));
+        }
+        if (searchFields.contains(DataItemSearchField.DATA_TYPE)) {
+            values.add(normalizeText(dataType == null ? null : dataType.getName()));
+        }
+        if (searchFields.contains(DataItemSearchField.CREATOR_ADDR)) {
+            values.add(normalizeText(dataItem.getCreator() == null ? null : dataItem.getCreator().getCreatorAddr()));
+        }
+
+        return nonBlankTokens.stream().allMatch(
+                token -> values.stream().anyMatch(value -> value.contains(token))
+        );
+    }
+
+    private static String normalizeText(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static boolean isBlankOrUndefined(String value) {
@@ -676,10 +1039,13 @@ public class NodeService {
     private DataItemRevisionDto buildRevisionDto(DataItem dataItem) {
         List<OffchainDataItemRevision> indexedRows =
                 offchainDataItemRevisionRepository.findByDataItemIdOrderByIdAsc(dataItem.getId());
+        List<OffchainDataItemRevision> effectiveIndexedRows = indexedRows.stream()
+                .filter(row -> !isReferenceDerivedRevisionRow(row))
+                .toList();
 
-        if (!indexedRows.isEmpty()) {
-            boolean enabled = indexedRows.stream().anyMatch(OffchainDataItemRevision::isEnabled);
-            List<String> replaces = indexedRows.stream()
+        if (!effectiveIndexedRows.isEmpty()) {
+            boolean enabled = effectiveIndexedRows.stream().anyMatch(OffchainDataItemRevision::isEnabled);
+            List<String> replaces = effectiveIndexedRows.stream()
                     .map(OffchainDataItemRevision::getReplacedDataItemId)
                     .filter(Objects::nonNull)
                     .filter(id -> !id.isBlank())
@@ -688,15 +1054,20 @@ public class NodeService {
             return new DataItemRevisionDto(enabled, replaces);
         }
 
-        List<String> referenceIds = normalizeObjectIds(dataItem.getReferences());
-        RevisionExtraction extraction = extractRevisionExtraction(dataItem.getContent(), referenceIds);
+        RevisionExtraction extraction = extractRevisionExtraction(dataItem.getContent());
         return new DataItemRevisionDto(
                 extraction.enabled(),
                 extraction.replaces()
         );
     }
 
-    private RevisionExtraction extractRevisionExtraction(String content, List<String> referenceIds) {
+    private static boolean isReferenceDerivedRevisionRow(OffchainDataItemRevision row) {
+        if (row == null) return false;
+        String source = row.getSource();
+        return source != null && "references".equalsIgnoreCase(source.trim());
+    }
+
+    private RevisionExtraction extractRevisionExtraction(String content) {
         if (content == null || content.isBlank()) {
             return new RevisionExtraction(false, List.of());
         }
@@ -724,7 +1095,7 @@ public class NodeService {
                 if (!revisionsEnabled) {
                     return new RevisionExtraction(false, List.of());
                 }
-                return new RevisionExtraction(true, referenceIds);
+                return new RevisionExtraction(true, List.of());
             }
 
             if (revisionsObject instanceof Map<?, ?> revisionsMap) {
@@ -745,19 +1116,11 @@ public class NodeService {
                     explicitPreviousIds.addAll(normalizeObjectIds(revisionsMap.get(key)));
                 }
 
-                List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                        ? referenceIds
-                        : normalizeObjectIds(explicitPreviousIds);
-
-                return new RevisionExtraction(true, effectivePreviousIds);
+                return new RevisionExtraction(true, normalizeObjectIds(explicitPreviousIds));
             }
 
             List<String> explicitPreviousIds = normalizeObjectIds(revisionsObject);
-            List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                    ? referenceIds
-                    : explicitPreviousIds;
-
-            return new RevisionExtraction(true, effectivePreviousIds);
+            return new RevisionExtraction(true, explicitPreviousIds);
         } catch (Exception ignored) {
             return new RevisionExtraction(false, List.of());
         }
@@ -815,6 +1178,14 @@ public class NodeService {
             String dataItemId,
             String dataItemVerificationId,
             Boolean dataItemVerificationVerified,
+            String dataItemQuery,
+            String dataItemSearchFields,
+            Boolean dataItemVerified,
+            Boolean dataItemHasRevisions,
+            Boolean dataItemHasVerifications,
+            String dataItemDataType,
+            String dataItemSortBy,
+            String dataItemSortDirection,
             String domain,
             long totalContainers,
             long returnedContainers,
@@ -831,6 +1202,14 @@ public class NodeService {
         filters.put("dataItemId", dataItemId);
         filters.put("dataItemVerificationId", dataItemVerificationId);
         filters.put("dataItemVerificationVerified", dataItemVerificationVerified);
+        filters.put("dataItemQuery", dataItemQuery);
+        filters.put("dataItemSearchFields", dataItemSearchFields);
+        filters.put("dataItemVerified", dataItemVerified);
+        filters.put("dataItemHasRevisions", dataItemHasRevisions);
+        filters.put("dataItemHasVerifications", dataItemHasVerifications);
+        filters.put("dataItemDataType", dataItemDataType);
+        filters.put("dataItemSortBy", dataItemSortBy);
+        filters.put("dataItemSortDirection", dataItemSortDirection);
         filters.put("domain", domain);
 
         Map<String, Object> meta = new LinkedHashMap<>();

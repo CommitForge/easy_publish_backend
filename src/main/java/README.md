@@ -10,6 +10,17 @@ This document describes the intended behavior of `NodeService#getContainerTree(.
 - Data type scope: `dataTypeId`
 - Data item scope: `dataItemId`
 - Data item verification scope: `dataItemVerificationId`, `dataItemVerificationVerified`
+- Data item search/sort scope (item-level mode):
+  - `dataItemQuery`
+  - `dataItemSearchFields` (`name`, `description`, `externalId`, `externalIndex`, `objectId`, `dataType`, `creatorAddr`)
+  - `dataItemVerified`
+  - `dataItemHasRevisions`
+  - `dataItemHasVerifications`
+  - `dataItemDataType` (data type name)
+  - `dataItemSortBy` (`created`, `name`, `external_index`, `external_id`)
+  - `dataItemSortDirection` (`asc` or `desc`)
+
+Default item sort is `created` + `desc` (latest on-chain sequence index first).
 
 ## Include Values
 
@@ -46,12 +57,14 @@ Response includes `meta.paginationLevel` and `meta.totalPages` to drive frontend
 - `totalContainers`, `returnedContainers`
 - `totalDataTypes`, `totalDataItems`, `totalDataItemVerifications`
 - `dataItemVerificationFilteredAfterPagination`
+- `availableDataTypes` (item mode convenience list for frontend filter UIs)
 
 ## Frontend Notes
 
 - Always branch pagination UX by `meta.paginationLevel`.
 - Render nested shape in order: `containers -> dataTypes -> dataItems -> dataItemVerifications`.
-- If data item verification filters are active and `dataItemVerificationFilteredAfterPagination=true`, expect that some pages can return fewer data items than requested page size.
+- Data item search/filter/sort is applied server-side before pagination.
+- `dataItemVerificationFilteredAfterPagination` is retained for compatibility but should generally remain `false` now that verification filters are applied pre-pagination.
 
 ## Data Item Revision Hints (Beta)
 
@@ -75,6 +88,6 @@ Derivation rules:
 
 - Reads `easy_publish.revisions` from `dataItem.content`.
 - Accepts flexible key names (for example `replaces`, `previousIds`, `revisionOf`).
-- If revisions are enabled but explicit IDs are omitted, falls back to `dataItem.references`.
+- Transaction `references` are independent and are not used as implicit revision IDs.
 - This helper is additive and does not replace existing `dataItem` fields.
 - Reverse-link fields (for example `supersededBy`/`latest`) are intentionally not included because they are off-chain derived.

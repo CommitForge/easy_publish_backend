@@ -30,8 +30,7 @@ public class RevisionsIndexFeature implements EasyPublishIndexFeature {
             return;
         }
 
-        List<String> referenceIds = EasyPublishIndexUtils.normalizeObjectIds(dataItem.getReferences());
-        RevisionExtraction revisionExtraction = extractRevisionExtraction(easyPublishMap, referenceIds);
+        RevisionExtraction revisionExtraction = extractRevisionExtraction(easyPublishMap);
         if (!revisionExtraction.enabled()) {
             return;
         }
@@ -78,8 +77,7 @@ public class RevisionsIndexFeature implements EasyPublishIndexFeature {
     }
 
     private RevisionExtraction extractRevisionExtraction(
-            Map<String, Object> easyPublishMap,
-            List<String> referenceIds
+            Map<String, Object> easyPublishMap
     ) {
         Object revisionsObject = easyPublishMap.get("revisions");
         if (revisionsObject == null) {
@@ -90,7 +88,7 @@ public class RevisionsIndexFeature implements EasyPublishIndexFeature {
             if (!revisionsEnabled) {
                 return RevisionExtraction.disabled();
             }
-            return new RevisionExtraction(true, referenceIds, "references", null);
+            return new RevisionExtraction(true, List.of(), "revision_setting", null);
         }
 
         if (revisionsObject instanceof Map<?, ?> revisionsMapRaw) {
@@ -108,11 +106,8 @@ public class RevisionsIndexFeature implements EasyPublishIndexFeature {
                 explicitPreviousIds.addAll(EasyPublishIndexUtils.normalizeObjectIds(revisionsMap.get(key)));
             }
 
-            List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                    ? referenceIds
-                    : EasyPublishIndexUtils.normalizeObjectIds(explicitPreviousIds);
-
-            String source = explicitPreviousIds.isEmpty() ? "references" : "revision_setting";
+            List<String> effectivePreviousIds = EasyPublishIndexUtils.normalizeObjectIds(explicitPreviousIds);
+            String source = "revision_setting";
             String changeDescription = EasyPublishIndexUtils.firstString(
                     revisionsMap.get("change"),
                     revisionsMap.get("changeDescription"),
@@ -124,10 +119,8 @@ public class RevisionsIndexFeature implements EasyPublishIndexFeature {
         }
 
         List<String> explicitPreviousIds = EasyPublishIndexUtils.normalizeObjectIds(revisionsObject);
-        List<String> effectivePreviousIds = explicitPreviousIds.isEmpty()
-                ? referenceIds
-                : explicitPreviousIds;
-        String source = explicitPreviousIds.isEmpty() ? "references" : "revision_setting";
+        List<String> effectivePreviousIds = explicitPreviousIds;
+        String source = "revision_setting";
 
         return new RevisionExtraction(true, effectivePreviousIds, source, null);
     }

@@ -159,7 +159,7 @@ All paths below are relative to `/izipublish`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `dataItemId`, `dataItemVerificationId`, `dataItemVerificationVerified`, `domain`, `page`, `pageSize`) |
+| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `dataItemId`, `dataItemVerificationId`, `dataItemVerificationVerified`, `dataItemQuery`, `dataItemSearchFields`, `dataItemVerified`, `dataItemHasRevisions`, `dataItemHasVerifications`, `dataItemDataType`, `dataItemSortBy`, `dataItemSortDirection`, `domain`, `page`, `pageSize`) |
 | `GET` | `/api/containers/{id}` | Container by ID |
 | `GET` | `/api/data-types/{id}` | DataType by ID |
 | `GET` | `/api/data-items/{id}` | DataItem by ID |
@@ -201,6 +201,10 @@ curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DAT
 curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION&userAddress=0x123&containerId=0xcontainer&dataItemVerificationVerified=true&page=0&pageSize=20"
 ```
 
+```bash
+curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION&userAddress=0x123&containerId=0xcontainer&dataItemQuery=oil%20change&dataItemSearchFields=name,description,externalId,externalIndex&dataItemSortBy=created&dataItemSortDirection=desc&page=0&pageSize=20"
+```
+
 ### `/api/items` Pagination Levels
 
 - `container` level: when `containerId` is not provided.
@@ -212,6 +216,7 @@ Response includes a `meta` object with:
 - `paginationLevel`, `page`, `pageSize`, `totalPages`, `hasNext`
 - `includes`, `filters`
 - aggregate counters (`totalContainers`, `totalDataTypes`, `totalDataItems`, `totalDataItemVerifications`)
+- `availableDataTypes` in `data_item` mode (for frontend filter dropdowns)
 - `dataItemVerificationFilteredAfterPagination` flag for frontend handling
 
 Frontend handoff guide:

@@ -54,6 +54,27 @@ page=0
 pageSize=20
 ```
 
+### 5) Data-item search + sort (server-side, before pagination)
+
+```text
+include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION
+userAddress=0x...
+containerId=0x...
+dataItemQuery=oil%20change
+dataItemSearchFields=name,description,externalId,externalIndex
+dataItemSortBy=created
+dataItemSortDirection=desc
+page=0
+pageSize=20
+```
+
+Optional data-item-only filters:
+
+- `dataItemVerified=true|false`
+- `dataItemHasRevisions=true|false`
+- `dataItemHasVerifications=true|false`
+- `dataItemDataType=<exact data type name>`
+
 ## Response Shape (important)
 
 ```json
@@ -87,6 +108,14 @@ pageSize=20
       "dataItemId": null,
       "dataItemVerificationId": null,
       "dataItemVerificationVerified": null,
+      "dataItemQuery": null,
+      "dataItemSearchFields": "name,description,externalId,externalIndex",
+      "dataItemVerified": null,
+      "dataItemHasRevisions": null,
+      "dataItemHasVerifications": null,
+      "dataItemDataType": null,
+      "dataItemSortBy": "created",
+      "dataItemSortDirection": "desc",
       "domain": null
     },
     "totalContainers": 50,
@@ -94,7 +123,8 @@ pageSize=20
     "totalDataTypes": 0,
     "totalDataItems": 0,
     "totalDataItemVerifications": 0,
-    "dataItemVerificationFilteredAfterPagination": false
+    "dataItemVerificationFilteredAfterPagination": false,
+    "availableDataTypes": ["Maintenance", "Insurance"]
   }
 }
 ```
@@ -105,7 +135,7 @@ pageSize=20
 - For `container`, page controls are for top-level containers.
 - For `data_type`, page controls are for container's data types.
 - For `data_item`, page controls are for items in selected container scope.
-- If `meta.dataItemVerificationFilteredAfterPagination` is `true`, do not assume `dataItems.length == pageSize`.
+- Data-item search/filter/sort is backend-side and runs before pagination, so `totalDataItems` reflects filtered results.
 
 ## Data Item Revisions (Beta)
 
@@ -122,5 +152,5 @@ Revision computation is additive and backward-compatible:
 
 - Existing `dataItem` and `dataItemVerifications` fields are unchanged.
 - `replaces` is read from `easy_publish.revisions` in `dataItem.content`.
-- If revisions are enabled but no explicit IDs are provided, backend falls back to `dataItem.references`.
+- Transaction `references` are independent and are not used as implicit revision IDs.
 - Reverse-link fields (for example `supersededBy`/`latest`) are intentionally not included because they are off-chain derived.
