@@ -76,8 +76,10 @@ graph LR
 |---|---|
 | Java | 25 |
 | Maven | 3.9+ |
-| Node.js | 18+ recommended |
+| Node.js | 24.1.0 |
 | PostgreSQL | 14+ recommended |
+
+GitHub Actions CI also uses `Node 24.1.0` and `JDK 25`.
 
 ### 1) Install Node script dependencies
 

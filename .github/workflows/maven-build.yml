@@ -15,6 +15,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node 24.1.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.1.0"
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      - name: Install Node script dependencies
+        run: npm ci --prefix node
+
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
