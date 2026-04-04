@@ -13,14 +13,18 @@ import com.easypublish.dtos.LinkGraphResponseDto;
 import com.easypublish.entities.offchain.OffchainDataItemRevision;
 import com.easypublish.entities.UserDataEntity;
 import com.easypublish.entities.onchain.Container;
+import com.easypublish.entities.onchain.ContainerChildLink;
 import com.easypublish.entities.onchain.DataItem;
 import com.easypublish.entities.onchain.DataItemVerification;
 import com.easypublish.entities.onchain.DataType;
+import com.easypublish.entities.onchain.Owner;
+import com.easypublish.repositories.ContainerChildLinkRepository;
 import com.easypublish.repositories.ContainerRepository;
 import com.easypublish.repositories.DataItemRepository;
 import com.easypublish.repositories.DataItemVerificationRepository;
 import com.easypublish.repositories.DataTypeRepository;
 import com.easypublish.repositories.OffchainDataItemRevisionRepository;
+import com.easypublish.repositories.OwnerRepository;
 import com.easypublish.repositories.PublishTargetRepository;
 import com.easypublish.repositories.UserDataRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -91,6 +95,21 @@ public class NodeService {
             DataItemSearchField.EXTERNAL_ID,
             DataItemSearchField.EXTERNAL_INDEX
     );
+    private static final EnumSet<ContainerChildLinkSearchField>
+            DEFAULT_CONTAINER_CHILD_LINK_SEARCH_FIELDS = EnumSet.of(
+            ContainerChildLinkSearchField.NAME,
+            ContainerChildLinkSearchField.DESCRIPTION,
+            ContainerChildLinkSearchField.EXTERNAL_ID,
+            ContainerChildLinkSearchField.EXTERNAL_INDEX,
+            ContainerChildLinkSearchField.PARENT_CONTAINER_ID,
+            ContainerChildLinkSearchField.CHILD_CONTAINER_ID
+    );
+    private static final EnumSet<OwnerSearchField> DEFAULT_OWNER_SEARCH_FIELDS = EnumSet.of(
+            OwnerSearchField.ADDRESS,
+            OwnerSearchField.ROLE,
+            OwnerSearchField.CONTAINER_ID,
+            OwnerSearchField.CONTAINER_NAME
+    );
 
     private enum DataItemSearchField {
         NAME,
@@ -108,6 +127,48 @@ public class NodeService {
         NAME,
         EXTERNAL_INDEX,
         EXTERNAL_ID
+    }
+
+    private enum ContainerChildLinkSearchField {
+        NAME,
+        DESCRIPTION,
+        CONTENT,
+        EXTERNAL_ID,
+        EXTERNAL_INDEX,
+        OBJECT_ID,
+        PARENT_CONTAINER_ID,
+        CHILD_CONTAINER_ID,
+        CREATOR_ADDR
+    }
+
+    private enum ContainerChildLinkSortBy {
+        CREATED,
+        NAME,
+        EXTERNAL_INDEX,
+        EXTERNAL_ID
+    }
+
+    private enum OwnerSearchField {
+        ADDRESS,
+        ROLE,
+        CONTAINER_ID,
+        CONTAINER_NAME,
+        OBJECT_ID,
+        CREATOR_ADDR,
+        REMOVED
+    }
+
+    private enum OwnerSortBy {
+        CREATED,
+        ADDRESS,
+        ROLE,
+        CONTAINER_NAME
+    }
+
+    private enum OwnerStatus {
+        ALL,
+        ACTIVE,
+        REMOVED
     }
 
     private enum RecipientScope {
@@ -149,6 +210,21 @@ public class NodeService {
             boolean sortAscending
     ) {}
 
+    private record ContainerChildLinkFilterOptions(
+            String query,
+            EnumSet<ContainerChildLinkSearchField> searchFields,
+            ContainerChildLinkSortBy sortBy,
+            boolean sortAscending
+    ) {}
+
+    private record OwnerFilterOptions(
+            String query,
+            EnumSet<OwnerSearchField> searchFields,
+            OwnerSortBy sortBy,
+            boolean sortAscending,
+            OwnerStatus status
+    ) {}
+
     private record RevisionExtraction(boolean enabled, List<String> replaces) {}
 
     private record GraphEntityMetadata(
@@ -168,7 +244,9 @@ public class NodeService {
     private final DataItemRepository dataItemRepository;
     private final DataTypeRepository dataTypeRepository;
     private final ContainerRepository containerRepository;
+    private final ContainerChildLinkRepository containerChildLinkRepository;
     private final DataItemVerificationRepository dataItemVerificationRepository;
+    private final OwnerRepository ownerRepository;
     private final OffchainDataItemRevisionRepository offchainDataItemRevisionRepository;
     private final PublishTargetRepository publishTargetRepository;
     private final NodeQueryService nodeQueryService;
@@ -189,7 +267,9 @@ public class NodeService {
             DataItemRepository dataItemRepository,
             DataTypeRepository dataTypeRepository,
             ContainerRepository containerRepository,
+            ContainerChildLinkRepository containerChildLinkRepository,
             DataItemVerificationRepository dataItemVerificationRepository,
+            OwnerRepository ownerRepository,
             OffchainDataItemRevisionRepository offchainDataItemRevisionRepository,
             PublishTargetRepository publishTargetRepository,
             NodeQueryService nodeQueryService,
@@ -206,7 +286,9 @@ public class NodeService {
         this.dataItemRepository = dataItemRepository;
         this.dataTypeRepository = dataTypeRepository;
         this.containerRepository = containerRepository;
+        this.containerChildLinkRepository = containerChildLinkRepository;
         this.dataItemVerificationRepository = dataItemVerificationRepository;
+        this.ownerRepository = ownerRepository;
         this.offchainDataItemRevisionRepository = offchainDataItemRevisionRepository;
         this.publishTargetRepository = publishTargetRepository;
         this.nodeQueryService = nodeQueryService;
@@ -438,6 +520,198 @@ public class NodeService {
     public DataItem getDataItem(String id) {
         return dataItemRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("DataItem not found: " + id));
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getContainerChildLinks(
+            String creatorAddr,
+            String containerId,
+            String containerScope,
+            String query,
+            String searchFields,
+            String sortBy,
+            String sortDirection,
+            String domain,
+            int page,
+            int pageSize
+    ) {
+        String normalizedContainerId = normalizeBlank(containerId);
+        String normalizedDomain = normalizeBlank(domain);
+        ContainerScope normalizedContainerScope = parseContainerScope(containerScope);
+        ContainerChildLinkFilterOptions filterOptions =
+                parseContainerChildLinkFilterOptions(query, searchFields, sortBy, sortDirection);
+
+        List<Container> scopedContainers = resolveContainerScope(
+                normalizedDomain,
+                normalizedContainerScope,
+                creatorAddr
+        );
+
+        if (normalizedContainerId != null) {
+            scopedContainers = scopedContainers.stream()
+                    .filter(container -> normalizedContainerId.equals(container.getId()))
+                    .toList();
+        }
+
+        List<String> scopedContainerIds = scopedContainers.stream()
+                .map(Container::getId)
+                .filter(Objects::nonNull)
+                .toList();
+
+        if (scopedContainerIds.isEmpty()) {
+            return buildBrowseResponse(
+                    List.of(),
+                    page,
+                    pageSize,
+                    0,
+                    buildContainerChildLinkFilterMeta(
+                            normalizedContainerId,
+                            containerScopeToApiValue(normalizedContainerScope),
+                            filterOptions,
+                            normalizedDomain
+                    )
+            );
+        }
+
+        List<ContainerChildLink> candidateLinks =
+                containerChildLinkRepository.findByContainerParentIdIn(scopedContainerIds);
+
+        Set<String> relatedContainerIds = new LinkedHashSet<>(scopedContainerIds);
+        for (ContainerChildLink link : candidateLinks) {
+            if (link == null) continue;
+            if (link.getContainerParentId() != null) {
+                relatedContainerIds.add(link.getContainerParentId());
+            }
+            if (link.getContainerChildId() != null) {
+                relatedContainerIds.add(link.getContainerChildId());
+            }
+        }
+
+        Map<String, String> containerNamesById = containerRepository.findAllById(relatedContainerIds).stream()
+                .collect(Collectors.toMap(
+                        Container::getId,
+                        this::containerDisplayName,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        List<ContainerChildLink> filteredLinks = candidateLinks.stream()
+                .filter(link -> matchesContainerChildLinkSearch(link, filterOptions))
+                .toList();
+        List<ContainerChildLink> orderedLinks =
+                sortContainerChildLinks(filteredLinks, filterOptions);
+
+        int totalElements = orderedLinks.size();
+        int fromIndex = Math.min(page * pageSize, totalElements);
+        int toIndex = Math.min(fromIndex + pageSize, totalElements);
+        List<ContainerChildLink> pagedLinks = orderedLinks.subList(fromIndex, toIndex);
+
+        List<Map<String, Object>> content = pagedLinks.stream()
+                .map(link -> toContainerChildLinkRow(link, containerNamesById))
+                .toList();
+
+        return buildBrowseResponse(
+                content,
+                page,
+                pageSize,
+                totalElements,
+                buildContainerChildLinkFilterMeta(
+                        normalizedContainerId,
+                        containerScopeToApiValue(normalizedContainerScope),
+                        filterOptions,
+                        normalizedDomain
+                )
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getOwners(
+            String creatorAddr,
+            String containerId,
+            String containerScope,
+            String ownerStatus,
+            String query,
+            String searchFields,
+            String sortBy,
+            String sortDirection,
+            String domain,
+            int page,
+            int pageSize
+    ) {
+        String normalizedContainerId = normalizeBlank(containerId);
+        String normalizedDomain = normalizeBlank(domain);
+        ContainerScope normalizedContainerScope = parseContainerScope(containerScope);
+        OwnerFilterOptions filterOptions =
+                parseOwnerFilterOptions(ownerStatus, query, searchFields, sortBy, sortDirection);
+
+        List<Container> scopedContainers = resolveContainerScope(
+                normalizedDomain,
+                normalizedContainerScope,
+                creatorAddr
+        );
+
+        if (normalizedContainerId != null) {
+            scopedContainers = scopedContainers.stream()
+                    .filter(container -> normalizedContainerId.equals(container.getId()))
+                    .toList();
+        }
+
+        List<String> scopedContainerIds = scopedContainers.stream()
+                .map(Container::getId)
+                .filter(Objects::nonNull)
+                .toList();
+
+        if (scopedContainerIds.isEmpty()) {
+            return buildBrowseResponse(
+                    List.of(),
+                    page,
+                    pageSize,
+                    0,
+                    buildOwnerFilterMeta(
+                            normalizedContainerId,
+                            containerScopeToApiValue(normalizedContainerScope),
+                            filterOptions,
+                            normalizedDomain
+                    )
+            );
+        }
+
+        Map<String, String> containerNamesById = scopedContainers.stream()
+                .collect(Collectors.toMap(
+                        Container::getId,
+                        this::containerDisplayName,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        List<Owner> filteredOwners = ownerRepository.findByContainerIdIn(scopedContainerIds).stream()
+                .filter(owner -> matchesOwnerStatus(owner, filterOptions.status()))
+                .filter(owner -> matchesOwnerSearch(owner, filterOptions, containerNamesById))
+                .toList();
+
+        List<Owner> orderedOwners = sortOwners(filteredOwners, filterOptions, containerNamesById);
+
+        int totalElements = orderedOwners.size();
+        int fromIndex = Math.min(page * pageSize, totalElements);
+        int toIndex = Math.min(fromIndex + pageSize, totalElements);
+        List<Owner> pagedOwners = orderedOwners.subList(fromIndex, toIndex);
+
+        List<Map<String, Object>> content = pagedOwners.stream()
+                .map(owner -> toOwnerRow(owner, containerNamesById))
+                .toList();
+
+        return buildBrowseResponse(
+                content,
+                page,
+                pageSize,
+                totalElements,
+                buildOwnerFilterMeta(
+                        normalizedContainerId,
+                        containerScopeToApiValue(normalizedContainerScope),
+                        filterOptions,
+                        normalizedDomain
+                )
+        );
     }
 
     /**
@@ -1461,6 +1735,519 @@ public class NodeService {
             return false;
         }
         return "asc".equalsIgnoreCase(raw.trim());
+    }
+
+    private static ContainerChildLinkFilterOptions parseContainerChildLinkFilterOptions(
+            String query,
+            String searchFieldsCsv,
+            String sortByRaw,
+            String sortDirectionRaw
+    ) {
+        return new ContainerChildLinkFilterOptions(
+                normalizeBlank(query),
+                parseContainerChildLinkSearchFields(searchFieldsCsv),
+                parseContainerChildLinkSortBy(sortByRaw),
+                parseDataItemSortAscending(sortDirectionRaw)
+        );
+    }
+
+    private static EnumSet<ContainerChildLinkSearchField> parseContainerChildLinkSearchFields(
+            String csv
+    ) {
+        if (csv == null || csv.isBlank()) {
+            return EnumSet.copyOf(DEFAULT_CONTAINER_CHILD_LINK_SEARCH_FIELDS);
+        }
+
+        EnumSet<ContainerChildLinkSearchField> parsed =
+                EnumSet.noneOf(ContainerChildLinkSearchField.class);
+        for (String token : csv.split(",")) {
+            String normalized = token == null ? "" : token.trim().toLowerCase(Locale.ROOT);
+            switch (normalized) {
+                case "name" -> parsed.add(ContainerChildLinkSearchField.NAME);
+                case "description" -> parsed.add(ContainerChildLinkSearchField.DESCRIPTION);
+                case "content", "body", "payload" ->
+                        parsed.add(ContainerChildLinkSearchField.CONTENT);
+                case "externalid", "external_id", "external-id" ->
+                        parsed.add(ContainerChildLinkSearchField.EXTERNAL_ID);
+                case "externalindex", "external_index", "external-index" ->
+                        parsed.add(ContainerChildLinkSearchField.EXTERNAL_INDEX);
+                case "objectid", "object_id", "object-id", "id" ->
+                        parsed.add(ContainerChildLinkSearchField.OBJECT_ID);
+                case "parentcontainerid", "parent_container_id", "parent-container-id",
+                        "containerparentid", "container_parent_id", "container-parent-id" ->
+                        parsed.add(ContainerChildLinkSearchField.PARENT_CONTAINER_ID);
+                case "childcontainerid", "child_container_id", "child-container-id",
+                        "containerchildid", "container_child_id", "container-child-id" ->
+                        parsed.add(ContainerChildLinkSearchField.CHILD_CONTAINER_ID);
+                case "creator", "creatoraddr", "creator_addr", "creator-addr" ->
+                        parsed.add(ContainerChildLinkSearchField.CREATOR_ADDR);
+                default -> {
+                    // ignore unknown values
+                }
+            }
+        }
+
+        return parsed.isEmpty()
+                ? EnumSet.copyOf(DEFAULT_CONTAINER_CHILD_LINK_SEARCH_FIELDS)
+                : parsed;
+    }
+
+    private static ContainerChildLinkSortBy parseContainerChildLinkSortBy(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return ContainerChildLinkSortBy.CREATED;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "name" -> ContainerChildLinkSortBy.NAME;
+            case "externalindex", "external_index", "external-index" ->
+                    ContainerChildLinkSortBy.EXTERNAL_INDEX;
+            case "externalid", "external_id", "external-id" ->
+                    ContainerChildLinkSortBy.EXTERNAL_ID;
+            case "created", "createdonchain", "created_on_chain", "created-on-chain" ->
+                    ContainerChildLinkSortBy.CREATED;
+            default -> ContainerChildLinkSortBy.CREATED;
+        };
+    }
+
+    private static OwnerFilterOptions parseOwnerFilterOptions(
+            String statusRaw,
+            String query,
+            String searchFieldsCsv,
+            String sortByRaw,
+            String sortDirectionRaw
+    ) {
+        return new OwnerFilterOptions(
+                normalizeBlank(query),
+                parseOwnerSearchFields(searchFieldsCsv),
+                parseOwnerSortBy(sortByRaw),
+                parseDataItemSortAscending(sortDirectionRaw),
+                parseOwnerStatus(statusRaw)
+        );
+    }
+
+    private static EnumSet<OwnerSearchField> parseOwnerSearchFields(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return EnumSet.copyOf(DEFAULT_OWNER_SEARCH_FIELDS);
+        }
+
+        EnumSet<OwnerSearchField> parsed = EnumSet.noneOf(OwnerSearchField.class);
+        for (String token : csv.split(",")) {
+            String normalized = token == null ? "" : token.trim().toLowerCase(Locale.ROOT);
+            switch (normalized) {
+                case "addr", "address" -> parsed.add(OwnerSearchField.ADDRESS);
+                case "role" -> parsed.add(OwnerSearchField.ROLE);
+                case "containerid", "container_id", "container-id" ->
+                        parsed.add(OwnerSearchField.CONTAINER_ID);
+                case "containername", "container_name", "container-name" ->
+                        parsed.add(OwnerSearchField.CONTAINER_NAME);
+                case "objectid", "object_id", "object-id", "id" ->
+                        parsed.add(OwnerSearchField.OBJECT_ID);
+                case "creator", "creatoraddr", "creator_addr", "creator-addr" ->
+                        parsed.add(OwnerSearchField.CREATOR_ADDR);
+                case "removed", "isremoved", "is_removed", "is-removed" ->
+                        parsed.add(OwnerSearchField.REMOVED);
+                default -> {
+                    // ignore unknown values
+                }
+            }
+        }
+
+        return parsed.isEmpty() ? EnumSet.copyOf(DEFAULT_OWNER_SEARCH_FIELDS) : parsed;
+    }
+
+    private static OwnerSortBy parseOwnerSortBy(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return OwnerSortBy.CREATED;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "address", "addr" -> OwnerSortBy.ADDRESS;
+            case "role" -> OwnerSortBy.ROLE;
+            case "containername", "container_name", "container-name", "container" ->
+                    OwnerSortBy.CONTAINER_NAME;
+            case "created", "createdonchain", "created_on_chain", "created-on-chain" ->
+                    OwnerSortBy.CREATED;
+            default -> OwnerSortBy.CREATED;
+        };
+    }
+
+    private static OwnerStatus parseOwnerStatus(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return OwnerStatus.ACTIVE;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "all", "any" -> OwnerStatus.ALL;
+            case "removed", "inactive" -> OwnerStatus.REMOVED;
+            default -> OwnerStatus.ACTIVE;
+        };
+    }
+
+    private static boolean matchesOwnerStatus(Owner owner, OwnerStatus status) {
+        if (owner == null || status == null) {
+            return false;
+        }
+
+        return switch (status) {
+            case ALL -> true;
+            case ACTIVE -> !owner.isRemoved();
+            case REMOVED -> owner.isRemoved();
+        };
+    }
+
+    private static boolean matchesContainerChildLinkSearch(
+            ContainerChildLink link,
+            ContainerChildLinkFilterOptions options
+    ) {
+        if (link == null || options == null || options.query() == null) {
+            return true;
+        }
+
+        List<String> queryTokens = toQueryTokens(options.query());
+        if (queryTokens.isEmpty()) {
+            return true;
+        }
+
+        List<String> values = new ArrayList<>();
+        if (options.searchFields().contains(ContainerChildLinkSearchField.NAME)) {
+            values.add(normalizeUnknownText(link.getName()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.DESCRIPTION)) {
+            values.add(normalizeUnknownText(link.getDescription()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.CONTENT)) {
+            values.add(normalizeUnknownText(link.getContent()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.EXTERNAL_ID)) {
+            values.add(normalizeUnknownText(link.getExternalId()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.EXTERNAL_INDEX)) {
+            values.add(normalizeUnknownText(link.getExternalIndex()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.OBJECT_ID)) {
+            values.add(normalizeUnknownText(link.getId()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.PARENT_CONTAINER_ID)) {
+            values.add(normalizeUnknownText(link.getContainerParentId()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.CHILD_CONTAINER_ID)) {
+            values.add(normalizeUnknownText(link.getContainerChildId()));
+        }
+        if (options.searchFields().contains(ContainerChildLinkSearchField.CREATOR_ADDR)) {
+            values.add(normalizeUnknownText(
+                    link.getCreator() == null ? null : link.getCreator().getCreatorAddr()
+            ));
+        }
+
+        return queryTokens.stream().allMatch(
+                token -> values.stream().anyMatch(value -> value.contains(token))
+        );
+    }
+
+    private static boolean matchesOwnerSearch(
+            Owner owner,
+            OwnerFilterOptions options,
+            Map<String, String> containerNamesById
+    ) {
+        if (owner == null || options == null || options.query() == null) {
+            return true;
+        }
+
+        List<String> queryTokens = toQueryTokens(options.query());
+        if (queryTokens.isEmpty()) {
+            return true;
+        }
+
+        String containerId = owner.getContainer() == null ? null : owner.getContainer().getId();
+        String containerName = containerNamesById.get(containerId);
+        List<String> values = new ArrayList<>();
+        if (options.searchFields().contains(OwnerSearchField.ADDRESS)) {
+            values.add(normalizeUnknownText(owner.getAddr()));
+        }
+        if (options.searchFields().contains(OwnerSearchField.ROLE)) {
+            values.add(normalizeUnknownText(owner.getRole()));
+        }
+        if (options.searchFields().contains(OwnerSearchField.CONTAINER_ID)) {
+            values.add(normalizeUnknownText(containerId));
+        }
+        if (options.searchFields().contains(OwnerSearchField.CONTAINER_NAME)) {
+            values.add(normalizeUnknownText(containerName));
+        }
+        if (options.searchFields().contains(OwnerSearchField.OBJECT_ID)) {
+            values.add(normalizeUnknownText(owner.getId()));
+        }
+        if (options.searchFields().contains(OwnerSearchField.CREATOR_ADDR)) {
+            values.add(normalizeUnknownText(
+                    owner.getCreator() == null ? null : owner.getCreator().getCreatorAddr()
+            ));
+        }
+        if (options.searchFields().contains(OwnerSearchField.REMOVED)) {
+            values.add(normalizeUnknownText(owner.isRemoved()));
+        }
+
+        return queryTokens.stream().allMatch(
+                token -> values.stream().anyMatch(value -> value.contains(token))
+        );
+    }
+
+    private static List<String> toQueryTokens(String query) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+
+        String normalizedQuery = normalizeText(query);
+        if (normalizedQuery.isBlank()) {
+            return List.of();
+        }
+
+        return java.util.Arrays.stream(normalizedQuery.split("\\s+"))
+                .map(String::trim)
+                .filter(token -> !token.isBlank())
+                .toList();
+    }
+
+    private static List<ContainerChildLink> sortContainerChildLinks(
+            List<ContainerChildLink> links,
+            ContainerChildLinkFilterOptions options
+    ) {
+        Comparator<ContainerChildLink> comparator = (left, right) -> {
+            int ordered = compareNullableSortValues(
+                    containerChildLinkSortValue(left, options.sortBy()),
+                    containerChildLinkSortValue(right, options.sortBy()),
+                    options.sortAscending()
+            );
+            if (ordered != 0) {
+                return ordered;
+            }
+            return normalizeText(left.getId()).compareTo(normalizeText(right.getId()));
+        };
+
+        return links.stream().sorted(comparator).toList();
+    }
+
+    private static Comparable<?> containerChildLinkSortValue(
+            ContainerChildLink link,
+            ContainerChildLinkSortBy sortBy
+    ) {
+        return switch (sortBy) {
+            case CREATED -> link.getSequenceIndex();
+            case NAME -> normalizeText(link.getName());
+            case EXTERNAL_INDEX -> link.getExternalIndex();
+            case EXTERNAL_ID -> normalizeText(link.getExternalId());
+        };
+    }
+
+    private static List<Owner> sortOwners(
+            List<Owner> owners,
+            OwnerFilterOptions options,
+            Map<String, String> containerNamesById
+    ) {
+        Comparator<Owner> comparator = (left, right) -> {
+            int ordered = compareNullableSortValues(
+                    ownerSortValue(left, options.sortBy(), containerNamesById),
+                    ownerSortValue(right, options.sortBy(), containerNamesById),
+                    options.sortAscending()
+            );
+            if (ordered != 0) {
+                return ordered;
+            }
+            return normalizeText(left.getId()).compareTo(normalizeText(right.getId()));
+        };
+
+        return owners.stream().sorted(comparator).toList();
+    }
+
+    private static Comparable<?> ownerSortValue(
+            Owner owner,
+            OwnerSortBy sortBy,
+            Map<String, String> containerNamesById
+    ) {
+        String containerId = owner.getContainer() == null ? null : owner.getContainer().getId();
+        return switch (sortBy) {
+            case CREATED -> owner.getSequenceIndex();
+            case ADDRESS -> normalizeText(owner.getAddr());
+            case ROLE -> normalizeText(owner.getRole());
+            case CONTAINER_NAME -> normalizeText(containerNamesById.get(containerId));
+        };
+    }
+
+    private static Map<String, Object> toContainerChildLinkRow(
+            ContainerChildLink link,
+            Map<String, String> containerNamesById
+    ) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("id", link.getId());
+        fields.put("containerParentId", link.getContainerParentId());
+        fields.put("containerParentName", containerNamesById.get(link.getContainerParentId()));
+        fields.put("containerChildId", link.getContainerChildId());
+        fields.put("containerChildName", containerNamesById.get(link.getContainerChildId()));
+        fields.put("name", link.getName());
+        fields.put("description", link.getDescription());
+        fields.put("content", link.getContent());
+        fields.put("externalId", link.getExternalId());
+        fields.put("externalIndex", link.getExternalIndex());
+        fields.put("sequenceIndex", link.getSequenceIndex());
+        fields.put(
+                "creatorAddr",
+                link.getCreator() == null ? null : link.getCreator().getCreatorAddr()
+        );
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("object_id", link.getId());
+        row.put("fields", fields);
+        return row;
+    }
+
+    private static Map<String, Object> toOwnerRow(
+            Owner owner,
+            Map<String, String> containerNamesById
+    ) {
+        String containerId = owner.getContainer() == null ? null : owner.getContainer().getId();
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("id", owner.getId());
+        fields.put("containerId", containerId);
+        fields.put("containerName", containerNamesById.get(containerId));
+        fields.put("addr", owner.getAddr());
+        fields.put("role", owner.getRole());
+        fields.put("removed", owner.isRemoved());
+        fields.put("sequenceIndex", owner.getSequenceIndex());
+        fields.put(
+                "creatorAddr",
+                owner.getCreator() == null ? null : owner.getCreator().getCreatorAddr()
+        );
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("object_id", owner.getId());
+        row.put("fields", fields);
+        return row;
+    }
+
+    private static Map<String, Object> buildBrowseResponse(
+            List<Map<String, Object>> content,
+            int page,
+            int pageSize,
+            int totalElements,
+            Map<String, Object> filters
+    ) {
+        int totalPages = totalElements == 0
+                ? 0
+                : (int) Math.ceil((double) totalElements / pageSize);
+        boolean hasNext = page + 1 < totalPages;
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("content", content);
+        response.put("page", page);
+        response.put("pageSize", pageSize);
+        response.put("totalElements", totalElements);
+        response.put("totalPages", totalPages);
+        response.put("hasNext", hasNext);
+        response.put("filters", filters);
+        return response;
+    }
+
+    private static Map<String, Object> buildContainerChildLinkFilterMeta(
+            String containerId,
+            String containerScope,
+            ContainerChildLinkFilterOptions options,
+            String domain
+    ) {
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("containerId", containerId);
+        filters.put("containerScope", containerScope);
+        filters.put("query", options.query());
+        filters.put("searchFields", toContainerChildLinkSearchFieldsCsv(options.searchFields()));
+        filters.put("sortBy", options.sortBy().name().toLowerCase(Locale.ROOT));
+        filters.put("sortDirection", options.sortAscending() ? "asc" : "desc");
+        filters.put("domain", domain);
+        return filters;
+    }
+
+    private static Map<String, Object> buildOwnerFilterMeta(
+            String containerId,
+            String containerScope,
+            OwnerFilterOptions options,
+            String domain
+    ) {
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("containerId", containerId);
+        filters.put("containerScope", containerScope);
+        filters.put("ownerStatus", ownerStatusToApiValue(options.status()));
+        filters.put("query", options.query());
+        filters.put("searchFields", toOwnerSearchFieldsCsv(options.searchFields()));
+        filters.put("sortBy", options.sortBy().name().toLowerCase(Locale.ROOT));
+        filters.put("sortDirection", options.sortAscending() ? "asc" : "desc");
+        filters.put("domain", domain);
+        return filters;
+    }
+
+    private static String toContainerChildLinkSearchFieldsCsv(
+            EnumSet<ContainerChildLinkSearchField> searchFields
+    ) {
+        List<String> values = new ArrayList<>();
+        if (searchFields.contains(ContainerChildLinkSearchField.NAME)) values.add("name");
+        if (searchFields.contains(ContainerChildLinkSearchField.DESCRIPTION)) values.add("description");
+        if (searchFields.contains(ContainerChildLinkSearchField.CONTENT)) values.add("content");
+        if (searchFields.contains(ContainerChildLinkSearchField.EXTERNAL_ID)) values.add("externalId");
+        if (searchFields.contains(ContainerChildLinkSearchField.EXTERNAL_INDEX)) values.add("externalIndex");
+        if (searchFields.contains(ContainerChildLinkSearchField.OBJECT_ID)) values.add("objectId");
+        if (searchFields.contains(ContainerChildLinkSearchField.PARENT_CONTAINER_ID)) {
+            values.add("parentContainerId");
+        }
+        if (searchFields.contains(ContainerChildLinkSearchField.CHILD_CONTAINER_ID)) {
+            values.add("childContainerId");
+        }
+        if (searchFields.contains(ContainerChildLinkSearchField.CREATOR_ADDR)) values.add("creatorAddr");
+        return String.join(",", values);
+    }
+
+    private static String toOwnerSearchFieldsCsv(EnumSet<OwnerSearchField> searchFields) {
+        List<String> values = new ArrayList<>();
+        if (searchFields.contains(OwnerSearchField.ADDRESS)) values.add("addr");
+        if (searchFields.contains(OwnerSearchField.ROLE)) values.add("role");
+        if (searchFields.contains(OwnerSearchField.CONTAINER_ID)) values.add("containerId");
+        if (searchFields.contains(OwnerSearchField.CONTAINER_NAME)) values.add("containerName");
+        if (searchFields.contains(OwnerSearchField.OBJECT_ID)) values.add("objectId");
+        if (searchFields.contains(OwnerSearchField.CREATOR_ADDR)) values.add("creatorAddr");
+        if (searchFields.contains(OwnerSearchField.REMOVED)) values.add("removed");
+        return String.join(",", values);
+    }
+
+    private static String ownerStatusToApiValue(OwnerStatus status) {
+        if (status == null) {
+            return "active";
+        }
+        return switch (status) {
+            case ALL -> "all";
+            case ACTIVE -> "active";
+            case REMOVED -> "removed";
+        };
+    }
+
+    private static String normalizeUnknownText(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof String stringValue) {
+            return normalizeText(stringValue);
+        }
+        if (value instanceof Boolean boolValue) {
+            return boolValue ? "true" : "false";
+        }
+        return String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String containerDisplayName(Container container) {
+        if (container == null) {
+            return "";
+        }
+        String name = normalizeBlank(container.getName());
+        if (name != null) {
+            return name;
+        }
+        return normalizeBlank(container.getId()) == null ? "" : container.getId();
     }
 
     private static RecipientScope parseRecipientScope(String raw) {

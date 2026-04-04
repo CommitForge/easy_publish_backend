@@ -38,7 +38,7 @@ graph LR
 
 - Indexes on-chain objects (`container`, `data_type`, `data_item`, `owner`, `owner_audit`, `data_item_verification`, `child`).
 - Stores normalized data in PostgreSQL through JPA entities/repositories.
-- Exposes REST endpoints for item trees, details, follows, user data, sync status, and report generation.
+- Exposes REST endpoints for item trees, auxiliary browse data, details, user data, sync status, link graphs, and report generation.
 - Pushes sync status to clients every 5 seconds through STOMP (`/topic/sync-status`).
 - Parses `easy_publish` JSON blocks from on-chain content into local publish/report tables.
 
@@ -161,7 +161,10 @@ All paths below are relative to `/izipublish`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `dataItemId`, `dataItemVerificationId`, `dataItemVerificationVerified`, `dataItemQuery`, `dataItemSearchFields`, `dataItemVerified`, `dataItemHasRevisions`, `dataItemHasVerifications`, `dataItemDataType`, `dataItemSortBy`, `dataItemSortDirection`, `domain`, `page`, `pageSize`) |
+| `GET` | `/api/items` | Main tree endpoint (`include`, `userAddress`, optional `containerId`, `dataTypeId`, `dataItemId`, `dataItemVerificationId`, `dataItemVerificationVerified`, recipient scopes, `containerScope`, data-item filters/sort, `domain`, `page`, `pageSize`) |
+| `GET` | `/api/container-child-links` | Auxiliary browse endpoint for container-child links (`userAddress`, optional `containerId`, `containerScope`, `query`, `searchFields`, `sortBy`, `sortDirection`, `domain`, `page`, `pageSize`) |
+| `GET` | `/api/owners` | Auxiliary browse endpoint for owners (`userAddress`, optional `containerId`, `containerScope`, `ownerStatus`, `query`, `searchFields`, `sortBy`, `sortDirection`, `domain`, `page`, `pageSize`) |
+| `POST` | `/api/link-graph` | Recipients/references recursive graph endpoint (`mode`, `sourceType`, `sourceContainerId`, `sourceDataItemId`, `seeds`, `maxDepth`, `maxNodes`, `preventCycles`) |
 | `GET` | `/api/containers/{id}` | Container by ID |
 | `GET` | `/api/data-types/{id}` | DataType by ID |
 | `GET` | `/api/data-items/{id}` | DataItem by ID |
@@ -170,9 +173,9 @@ All paths below are relative to `/izipublish`.
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/api/follow-container` | Follow one or many containers (`userAddress`, `containerIds`) |
-| `DELETE` | `/api/follow-container` | Unfollow one (`userAddress`, `containerId`) |
-| `DELETE` | `/api/follow-containers` | Unfollow all for a user (`userAddress`) |
+| `POST` | `/api/follow-container` | Legacy endpoint: returns HTTP `409` (follow updates are on-chain; use `easy_publish.follow_containers`) |
+| `DELETE` | `/api/follow-container` | Legacy endpoint: returns HTTP `409` (unfollow is on-chain) |
+| `DELETE` | `/api/follow-containers` | Legacy endpoint: returns HTTP `409` (bulk unfollow is on-chain) |
 | `GET` | `/api/followed-containers` | Paginated followed list (`userAddress`, `page`, `pageSize`) |
 
 ### User and Sync
@@ -205,6 +208,14 @@ curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DAT
 
 ```bash
 curl "http://localhost:8084/izipublish/api/items?include=CONTAINER,DATA_TYPE,DATA_ITEM,DATA_ITEM_VERIFICATION&userAddress=0x123&containerId=0xcontainer&dataItemQuery=oil%20change&dataItemSearchFields=name,description,externalId,externalIndex&dataItemSortBy=created&dataItemSortDirection=desc&page=0&pageSize=20"
+```
+
+```bash
+curl "http://localhost:8084/izipublish/api/container-child-links?userAddress=0x123&containerScope=accessible&query=child&page=0&pageSize=20"
+```
+
+```bash
+curl "http://localhost:8084/izipublish/api/owners?userAddress=0x123&ownerStatus=active&sortBy=address&sortDirection=asc&page=0&pageSize=20"
 ```
 
 ### `/api/items` Pagination Levels

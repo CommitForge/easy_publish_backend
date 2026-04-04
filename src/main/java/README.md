@@ -1,6 +1,15 @@
-# `/api/items` Service Notes
+# `/api/items` and Auxiliary Browse Service Notes
 
-This document describes the intended behavior of `NodeService#getContainerTree(...)` and the API contract consumed by frontend clients.
+This document describes the intended behavior of:
+
+- `NodeService#getContainerTree(...)` (`/api/items`)
+- auxiliary browse services:
+  - `/api/container-child-links`
+  - `/api/owners`
+- link graph:
+  - `/api/link-graph`
+
+and the API contracts consumed by frontend clients.
 
 ## Query Scope
 
@@ -73,6 +82,74 @@ Response includes `meta.paginationLevel` and `meta.totalPages` to drive frontend
   - `containerScope=accessible` (default): owned + followed containers
   - `containerScope=all`: all containers
 - `dataItemVerificationFilteredAfterPagination` is retained for compatibility but should generally remain `false` now that verification filters are applied pre-pagination.
+
+## Auxiliary Browse Endpoints
+
+These endpoints are intentionally separate from `/api/items` so item-tree logic
+remains focused on primary data.
+
+### `/api/container-child-links`
+
+Purpose:
+
+- browse indexed container-child links in table form
+
+Query scope:
+
+- `userAddress`
+- optional `containerId`
+- `containerScope=accessible|all`
+- optional `query`
+- optional `searchFields`
+- optional `sortBy` (`created|name|external_index|external_id`)
+- optional `sortDirection` (`asc|desc`, default `desc`)
+- optional `domain`
+- `page`, `pageSize`
+
+Response shape:
+
+- top-level pagination keys (`page`, `pageSize`, `totalElements`, `totalPages`, `hasNext`)
+- `content[]` entries in `{ object_id, fields }` shape
+- `filters` echo map for effective request context
+
+### `/api/owners`
+
+Purpose:
+
+- browse indexed owner rows linked to containers
+
+Query scope:
+
+- `userAddress`
+- optional `containerId`
+- `containerScope=accessible|all`
+- optional `ownerStatus` (`active|removed|all`, default `active`)
+- optional `query`
+- optional `searchFields`
+- optional `sortBy` (`created|address|role|container_name`)
+- optional `sortDirection` (`asc|desc`, default `desc`)
+- optional `domain`
+- `page`, `pageSize`
+
+Response shape:
+
+- top-level pagination keys (`page`, `pageSize`, `totalElements`, `totalPages`, `hasNext`)
+- `content[]` entries in `{ object_id, fields }` shape
+- `filters` echo map for effective request context
+
+## Link Graph Endpoint
+
+`POST /api/link-graph` powers recipients/references graph dialogs.
+
+Important defaults and limits:
+
+- default `mode`: `recipients`
+- default `sourceType`: `data_item`
+- default `maxDepth`: `3` (clamped to `1..8`)
+- default `maxNodes`: `160` (clamped to `1..500`)
+- default `preventCycles`: `true`
+
+If limits are hit, backend returns partial graph and a message in `info`.
 
 ## Data Item Revision Hints (Beta)
 

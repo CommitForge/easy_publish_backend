@@ -96,9 +96,7 @@ public class ContainerRestController {
 
         EnumSet<ContainerTreeIncludeEnum> includes = parseIncludes(include, containerId);
 
-        if (defaultPublicDomain.equals(domain)) {
-            domain = null;
-        }
+        domain = normalizeDomain(domain);
 
         return nodeService.getContainerTree(
                 containerId,
@@ -123,6 +121,78 @@ public class ContainerRestController {
                 safePage,
                 safePageSize,
                 includes
+        );
+    }
+
+    @GetMapping("/api/container-child-links")
+    public Map<String, Object> getContainerChildLinks(
+            @RequestParam String userAddress,
+            @RequestParam(required = false) String containerId,
+            @RequestParam(required = false) String containerScope,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String searchFields,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDirection,
+            @RequestParam(required = false) String domain,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        if (userAddress == null || userAddress.isBlank()) {
+            throw new IllegalArgumentException("userAddress is required");
+        }
+
+        int safePage = Math.max(DEFAULT_PAGE, page);
+        int safePageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize));
+        String normalizedDomain = normalizeDomain(domain);
+
+        return nodeService.getContainerChildLinks(
+                userAddress,
+                containerId,
+                containerScope,
+                query,
+                searchFields,
+                sortBy,
+                sortDirection,
+                normalizedDomain,
+                safePage,
+                safePageSize
+        );
+    }
+
+    @GetMapping("/api/owners")
+    public Map<String, Object> getOwners(
+            @RequestParam String userAddress,
+            @RequestParam(required = false) String containerId,
+            @RequestParam(required = false) String containerScope,
+            @RequestParam(required = false) String ownerStatus,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String searchFields,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDirection,
+            @RequestParam(required = false) String domain,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        if (userAddress == null || userAddress.isBlank()) {
+            throw new IllegalArgumentException("userAddress is required");
+        }
+
+        int safePage = Math.max(DEFAULT_PAGE, page);
+        int safePageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, pageSize));
+        String normalizedDomain = normalizeDomain(domain);
+
+        return nodeService.getOwners(
+                userAddress,
+                containerId,
+                containerScope,
+                ownerStatus,
+                query,
+                searchFields,
+                sortBy,
+                sortDirection,
+                normalizedDomain,
+                safePage,
+                safePageSize
         );
     }
 
@@ -156,6 +226,18 @@ public class ContainerRestController {
         }
 
         return includes;
+    }
+
+    private String normalizeDomain(String domain) {
+        if (domain == null || domain.isBlank()) {
+            return null;
+        }
+
+        if (defaultPublicDomain.equals(domain)) {
+            return null;
+        }
+
+        return domain;
     }
 
     @GetMapping("/api/containers/{id}")

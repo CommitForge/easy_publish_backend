@@ -75,6 +75,13 @@ Optional data-item-only filters:
 - `dataItemHasVerifications=true|false`
 - `dataItemDataType=<exact data type name>`
 
+Cross-container and received filtering:
+
+- `containerScope=accessible|all`
+- `dataItemRecipientScope=mine|others|with_recipients|all`
+- `dataItemVerificationRecipientScope=mine|others|with_recipients|all`
+- `recipientAddress=<wallet-address>` (used for `mine` / `others` scopes)
+
 ## Response Shape (important)
 
 ```json
@@ -108,6 +115,9 @@ Optional data-item-only filters:
       "dataItemId": null,
       "dataItemVerificationId": null,
       "dataItemVerificationVerified": null,
+      "dataItemRecipientScope": null,
+      "dataItemVerificationRecipientScope": null,
+      "recipientAddress": null,
       "dataItemQuery": null,
       "dataItemSearchFields": "name,description,externalId,externalIndex",
       "dataItemVerified": null,
@@ -116,7 +126,8 @@ Optional data-item-only filters:
       "dataItemDataType": null,
       "dataItemSortBy": "created",
       "dataItemSortDirection": "desc",
-      "domain": null
+      "domain": null,
+      "containerScope": "accessible"
     },
     "totalContainers": 50,
     "returnedContainers": 20,
@@ -136,6 +147,25 @@ Optional data-item-only filters:
 - For `data_type`, page controls are for container's data types.
 - For `data_item`, page controls are for items in selected container scope.
 - Data-item search/filter/sort is backend-side and runs before pagination, so `totalDataItems` reflects filtered results.
+
+## Auxiliary Browse APIs
+
+These are intentionally separate from `/api/items`:
+
+### `GET /api/container-child-links`
+
+Use for browsing indexed container-child links:
+
+- supports `containerScope`, search fields, sort, pagination
+- returns flattened rows in `{ object_id, fields }` format
+
+### `GET /api/owners`
+
+Use for browsing indexed owners:
+
+- supports `ownerStatus=active|removed|all`
+- supports `containerScope`, search fields, sort, pagination
+- returns flattened rows in `{ object_id, fields }` format
 
 ## Data Item Revisions (Beta)
 
