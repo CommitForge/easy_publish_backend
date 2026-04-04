@@ -6,10 +6,14 @@ This document describes the intended behavior of `NodeService#getContainerTree(.
 
 `/api/items` supports these filter layers:
 
-- Container scope: `containerId`, `domain`, `userAddress`
+- Container scope: `containerId`, `domain`, `userAddress`, `containerScope`
 - Data type scope: `dataTypeId`
 - Data item scope: `dataItemId`
 - Data item verification scope: `dataItemVerificationId`, `dataItemVerificationVerified`
+- Recipient scope:
+  - `dataItemRecipientScope` (`mine`, `others`, `with_recipients`, `all`)
+  - `dataItemVerificationRecipientScope` (`mine`, `others`, `with_recipients`, `all`)
+  - `recipientAddress` (used for `mine` / `others`)
 - Data item search/sort scope (item-level mode):
   - `dataItemQuery`
   - `dataItemSearchFields` (`name`, `description`, `externalId`, `externalIndex`, `objectId`, `dataType`, `creatorAddr`)
@@ -40,7 +44,8 @@ Controller defaults:
 
 Pagination level depends on selected scope:
 
-- `container` level when browsing containers (no `containerId`)
+- `container` level when browsing containers (no `containerId` and non-item include)
+- `data_item` level in cross-container item mode (no `containerId` with `DATA_ITEM`)
 - `data_type` level when in single-container mode with only type-level includes
 - `data_item` level when in single-container mode with item-level includes
 
@@ -64,6 +69,9 @@ Response includes `meta.paginationLevel` and `meta.totalPages` to drive frontend
 - Always branch pagination UX by `meta.paginationLevel`.
 - Render nested shape in order: `containers -> dataTypes -> dataItems -> dataItemVerifications`.
 - Data item search/filter/sort is applied server-side before pagination.
+- Container scope behavior in cross-container item mode:
+  - `containerScope=accessible` (default): owned + followed containers
+  - `containerScope=all`: all containers
 - `dataItemVerificationFilteredAfterPagination` is retained for compatibility but should generally remain `false` now that verification filters are applied pre-pagination.
 
 ## Data Item Revision Hints (Beta)

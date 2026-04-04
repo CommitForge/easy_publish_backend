@@ -2,6 +2,8 @@ package com.easypublish.controller;
 
 import com.easypublish.dtos.ContainerTreeDto;
 import com.easypublish.dtos.ContainerTreeIncludeEnum;
+import com.easypublish.dtos.LinkGraphRequestDto;
+import com.easypublish.dtos.LinkGraphResponseDto;
 import com.easypublish.entities.offchain.FollowedContainer;
 import com.easypublish.entities.offchain.OffchainFollowContainer;
 import com.easypublish.entities.onchain.Container;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -67,6 +70,10 @@ public class ContainerRestController {
             @RequestParam(required = false) String dataItemId,
             @RequestParam(required = false) String dataItemVerificationId,
             @RequestParam(required = false) Boolean dataItemVerificationVerified,
+            @RequestParam(required = false) String dataItemRecipientScope,
+            @RequestParam(required = false) String dataItemVerificationRecipientScope,
+            @RequestParam(required = false) String recipientAddress,
+            @RequestParam(required = false) String containerScope,
             @RequestParam(required = false) String dataItemQuery,
             @RequestParam(required = false) String dataItemSearchFields,
             @RequestParam(required = false) Boolean dataItemVerified,
@@ -99,6 +106,10 @@ public class ContainerRestController {
                 dataItemId,
                 dataItemVerificationId,
                 dataItemVerificationVerified,
+                dataItemRecipientScope,
+                dataItemVerificationRecipientScope,
+                recipientAddress,
+                containerScope,
                 dataItemQuery,
                 dataItemSearchFields,
                 dataItemVerified,
@@ -113,6 +124,13 @@ public class ContainerRestController {
                 safePageSize,
                 includes
         );
+    }
+
+    @PostMapping("/api/link-graph")
+    public LinkGraphResponseDto getLinkGraph(
+            @RequestBody(required = false) LinkGraphRequestDto request
+    ) {
+        return nodeService.getLinkGraph(request);
     }
 
     private static EnumSet<ContainerTreeIncludeEnum> parseIncludes(String include, String containerId) {

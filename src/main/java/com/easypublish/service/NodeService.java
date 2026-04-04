@@ -6,6 +6,10 @@ import com.easypublish.dtos.ContainerTreeIncludeEnum;
 import com.easypublish.dtos.DataItemNodeDto;
 import com.easypublish.dtos.DataItemRevisionDto;
 import com.easypublish.dtos.DataTypeNodeDto;
+import com.easypublish.dtos.LinkGraphEdgeDto;
+import com.easypublish.dtos.LinkGraphNodeDto;
+import com.easypublish.dtos.LinkGraphRequestDto;
+import com.easypublish.dtos.LinkGraphResponseDto;
 import com.easypublish.entities.offchain.OffchainDataItemRevision;
 import com.easypublish.entities.UserDataEntity;
 import com.easypublish.entities.onchain.Container;
@@ -36,8 +40,11 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.math.BigInteger;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -103,6 +110,34 @@ public class NodeService {
         EXTERNAL_ID
     }
 
+    private enum RecipientScope {
+        ALL,
+        MINE,
+        OTHERS,
+        WITH_RECIPIENTS
+    }
+
+    private enum ContainerScope {
+        ACCESSIBLE,
+        ALL
+    }
+
+    private enum LinkGraphMode {
+        RECIPIENTS,
+        REFERENCES
+    }
+
+    private enum LinkSourceType {
+        DATA_ITEM,
+        DATA_ITEM_VERIFICATION
+    }
+
+    private static final int LINK_GRAPH_DEFAULT_MAX_DEPTH = 3;
+    private static final int LINK_GRAPH_MAX_DEPTH = 8;
+    private static final int LINK_GRAPH_DEFAULT_MAX_NODES = 160;
+    private static final int LINK_GRAPH_MAX_NODES = 500;
+    private static final int LINK_GRAPH_MAX_EDGES_FACTOR = 3;
+
     private record DataItemFilterOptions(
             String query,
             EnumSet<DataItemSearchField> searchFields,
@@ -115,6 +150,18 @@ public class NodeService {
     ) {}
 
     private record RevisionExtraction(boolean enabled, List<String> replaces) {}
+
+    private record GraphEntityMetadata(
+            String id,
+            String kind,
+            String containerId,
+            String dataItemId,
+            String name
+    ) {}
+
+    private record GraphFrontierNode(String value, int level) {}
+
+    private record GraphNeighbor(String target, String relation, String kind) {}
 
     private final UserDataRepository userRepository;
     private final ObjectMapper mapper;
@@ -403,6 +450,10 @@ public class NodeService {
             String dataItemId,
             String dataItemVerificationId,
             Boolean dataItemVerificationVerified,
+            String dataItemRecipientScope,
+            String dataItemVerificationRecipientScope,
+            String recipientAddress,
+            String containerScope,
             String dataItemQuery,
             String dataItemSearchFields,
             Boolean dataItemVerified,
@@ -434,6 +485,14 @@ public class NodeService {
         String normalizedDataTypeId = normalizeBlank(dataTypeId);
         String normalizedDataItemId = normalizeBlank(dataItemId);
         String normalizedDataItemVerificationId = normalizeBlank(dataItemVerificationId);
+        String explicitRecipientAddress = normalizeBlank(recipientAddress);
+        String normalizedRecipientAddress =
+                explicitRecipientAddress != null ? explicitRecipientAddress : normalizeBlank(creatorAddr);
+        RecipientScope normalizedDataItemRecipientScope =
+                parseRecipientScope(dataItemRecipientScope);
+        RecipientScope normalizedDataItemVerificationRecipientScope =
+                parseRecipientScope(dataItemVerificationRecipientScope);
+        ContainerScope normalizedContainerScope = parseContainerScope(containerScope);
         DataItemFilterOptions dataItemFilters = parseDataItemFilterOptions(
                 dataItemQuery,
                 dataItemSearchFields,
@@ -446,6 +505,26 @@ public class NodeService {
         );
 
         if (normalizedContainerId == null) {
+            if (includeDataItems) {
+                return getContainerTreeAcrossContainers(
+                        normalizedDataTypeId,
+                        normalizedDataItemId,
+                        normalizedDataItemVerificationId,
+                        dataItemVerificationVerified,
+                        normalizedDataItemRecipientScope,
+                        normalizedDataItemVerificationRecipientScope,
+                        normalizedRecipientAddress,
+                        dataItemFilters,
+                        normalizedDomain,
+                        normalizedContainerScope,
+                        creatorAddr,
+                        page,
+                        pageSize,
+                        safeIncludes,
+                        includeDataItemVerifications
+                );
+            }
+
             Pageable pageable = PageRequest.of(page, pageSize);
             Page<Container> containerPage = normalizedDomain != null
                     ? containerRepository.findByPublishTargetDomainPage(normalizedDomain, pageable)
@@ -465,6 +544,9 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    recipientScopeToApiValue(normalizedDataItemRecipientScope),
+                    recipientScopeToApiValue(normalizedDataItemVerificationRecipientScope),
+                    normalizedRecipientAddress,
                     dataItemFilters.query(),
                     toSearchFieldsCsv(dataItemFilters.searchFields()),
                     dataItemFilters.verified(),
@@ -474,6 +556,7 @@ public class NodeService {
                     dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
                     dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
+                    containerScopeToApiValue(normalizedContainerScope),
                     containerPage.getTotalElements(),
                     containerNodes.size(),
                     0L,
@@ -501,6 +584,9 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    recipientScopeToApiValue(normalizedDataItemRecipientScope),
+                    recipientScopeToApiValue(normalizedDataItemVerificationRecipientScope),
+                    normalizedRecipientAddress,
                     dataItemFilters.query(),
                     toSearchFieldsCsv(dataItemFilters.searchFields()),
                     dataItemFilters.verified(),
@@ -510,6 +596,7 @@ public class NodeService {
                     dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
                     dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
+                    containerScopeToApiValue(normalizedContainerScope),
                     1L,
                     1L,
                     0L,
@@ -568,6 +655,9 @@ public class NodeService {
                     normalizedDataItemId,
                     normalizedDataItemVerificationId,
                     dataItemVerificationVerified,
+                    recipientScopeToApiValue(normalizedDataItemRecipientScope),
+                    recipientScopeToApiValue(normalizedDataItemVerificationRecipientScope),
+                    normalizedRecipientAddress,
                     dataItemFilters.query(),
                     toSearchFieldsCsv(dataItemFilters.searchFields()),
                     dataItemFilters.verified(),
@@ -577,6 +667,7 @@ public class NodeService {
                     dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
                     dataItemFilters.sortAscending() ? "asc" : "desc",
                     normalizedDomain,
+                    containerScopeToApiValue(normalizedContainerScope),
                     1L,
                     1L,
                     dataTypePage.getTotalElements(),
@@ -616,6 +707,18 @@ public class NodeService {
             );
         }
 
+        if (normalizedDataItemRecipientScope != RecipientScope.ALL) {
+            candidateItems = candidateItems.stream()
+                    .filter(item ->
+                            matchesRecipientScope(
+                                    item.getRecipients(),
+                                    normalizedDataItemRecipientScope,
+                                    normalizedRecipientAddress
+                            )
+                    )
+                    .toList();
+        }
+
         List<String> candidateItemIds = candidateItems.stream().map(DataItem::getId).toList();
         boolean needsVerifications =
                 includeDataItemVerifications
@@ -640,11 +743,25 @@ public class NodeService {
                     .toList();
         }
 
+        if (normalizedDataItemVerificationRecipientScope != RecipientScope.ALL) {
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
+                    .filter(verification ->
+                            matchesRecipientScope(
+                                    verification.getRecipients(),
+                                    normalizedDataItemVerificationRecipientScope,
+                                    normalizedRecipientAddress
+                            )
+                    )
+                    .toList();
+        }
+
         Map<String, List<DataItemVerification>> dataItemVerificationsByItemId = filteredDataItemVerifications.stream()
                 .collect(Collectors.groupingBy(DataItemVerification::getDataItemId));
 
         boolean dataItemVerificationFiltered =
-                normalizedDataItemVerificationId != null || dataItemVerificationVerified != null;
+                normalizedDataItemVerificationId != null
+                        || dataItemVerificationVerified != null
+                        || normalizedDataItemVerificationRecipientScope != RecipientScope.ALL;
 
         Map<String, DataItemRevisionDto> revisionDtoCache = new HashMap<>();
         Function<DataItem, DataItemRevisionDto> revisionResolver =
@@ -730,6 +847,9 @@ public class NodeService {
                 normalizedDataItemId,
                 normalizedDataItemVerificationId,
                 dataItemVerificationVerified,
+                recipientScopeToApiValue(normalizedDataItemRecipientScope),
+                recipientScopeToApiValue(normalizedDataItemVerificationRecipientScope),
+                normalizedRecipientAddress,
                 dataItemFilters.query(),
                 toSearchFieldsCsv(dataItemFilters.searchFields()),
                 dataItemFilters.verified(),
@@ -739,6 +859,7 @@ public class NodeService {
                 dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
                 dataItemFilters.sortAscending() ? "asc" : "desc",
                 normalizedDomain,
+                containerScopeToApiValue(normalizedContainerScope),
                 1L,
                 1L,
                 responseDataTypes.size(),
@@ -774,6 +895,494 @@ public class NodeService {
             String dataTypeId
     ) {
         return nodeQueryService.findByType(type, creatorAddr, containerId, dataTypeId);
+    }
+
+    @Transactional(readOnly = true)
+    public LinkGraphResponseDto getLinkGraph(LinkGraphRequestDto request) {
+        if (request == null) {
+            return new LinkGraphResponseDto(List.of(), List.of(), "Missing request payload.");
+        }
+
+        LinkGraphMode mode = parseLinkGraphMode(request.getMode());
+        LinkSourceType sourceType = parseLinkSourceType(request.getSourceType());
+        String sourceContainerId = normalizeBlank(request.getSourceContainerId());
+        String sourceDataItemId = normalizeBlank(request.getSourceDataItemId());
+        int maxDepth = clamp(
+                request.getMaxDepth(),
+                LINK_GRAPH_DEFAULT_MAX_DEPTH,
+                1,
+                LINK_GRAPH_MAX_DEPTH
+        );
+        int maxNodes = clamp(
+                request.getMaxNodes(),
+                LINK_GRAPH_DEFAULT_MAX_NODES,
+                1,
+                LINK_GRAPH_MAX_NODES
+        );
+        boolean preventCycles = request.getPreventCycles() == null || request.getPreventCycles();
+
+        List<String> seeds = request.getSeeds() == null
+                ? List.of()
+                : request.getSeeds().stream()
+                        .map(NodeService::normalizeBlank)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+
+        if (seeds.isEmpty()) {
+            return new LinkGraphResponseDto(List.of(), List.of(), "No seed values provided.");
+        }
+
+        Map<String, GraphEntityMetadata> entitiesById = new HashMap<>();
+        Map<String, List<String>> recipientToObjectIds = new HashMap<>();
+        Map<String, List<String>> referenceToObjectIds = new HashMap<>();
+        Map<String, List<String>> objectToRecipients = new HashMap<>();
+        Map<String, List<String>> objectToReferences = new HashMap<>();
+
+        for (DataItem dataItem : dataItemRepository.findAll()) {
+            GraphEntityMetadata metadata = new GraphEntityMetadata(
+                    dataItem.getId(),
+                    "data_item",
+                    dataItem.getContainerId(),
+                    dataItem.getId(),
+                    dataItem.getName()
+            );
+            String objectKey = normalizeGraphKey(dataItem.getId());
+            if (objectKey == null) {
+                continue;
+            }
+
+            entitiesById.put(objectKey, metadata);
+            indexGraphLinks(
+                    dataItem.getId(),
+                    dataItem.getRecipients(),
+                    dataItem.getReferences(),
+                    recipientToObjectIds,
+                    referenceToObjectIds,
+                    objectToRecipients,
+                    objectToReferences
+            );
+        }
+
+        for (DataItemVerification verification : dataItemVerificationRepository.findAll()) {
+            GraphEntityMetadata metadata = new GraphEntityMetadata(
+                    verification.getId(),
+                    "data_item_verification",
+                    verification.getContainerId(),
+                    verification.getDataItemId(),
+                    verification.getName()
+            );
+            String objectKey = normalizeGraphKey(verification.getId());
+            if (objectKey == null) {
+                continue;
+            }
+
+            entitiesById.put(objectKey, metadata);
+            indexGraphLinks(
+                    verification.getId(),
+                    verification.getRecipients(),
+                    verification.getReferences(),
+                    recipientToObjectIds,
+                    referenceToObjectIds,
+                    objectToRecipients,
+                    objectToReferences
+            );
+        }
+
+        String effectiveSourceDataItemId = sourceDataItemId;
+        String sourceVerificationId = null;
+        if (sourceType == LinkSourceType.DATA_ITEM_VERIFICATION && sourceDataItemId != null) {
+            GraphEntityMetadata sourceEntity = entitiesById.get(normalizeGraphKey(sourceDataItemId));
+            if (sourceEntity != null && "data_item_verification".equals(sourceEntity.kind())) {
+                sourceVerificationId = sourceEntity.id();
+                effectiveSourceDataItemId = normalizeBlank(sourceEntity.dataItemId());
+            }
+        }
+
+        Map<String, LinkGraphNodeDto> nodesByKey = new LinkedHashMap<>();
+        Map<String, LinkGraphEdgeDto> edgesByKey = new LinkedHashMap<>();
+        Deque<GraphFrontierNode> queue = new ArrayDeque<>();
+        Set<String> visited = new LinkedHashSet<>();
+        int maxEdges = Math.max(maxNodes * LINK_GRAPH_MAX_EDGES_FACTOR, maxNodes);
+        boolean nodesTruncated = false;
+        boolean edgesTruncated = false;
+
+        for (String seed : seeds) {
+            String seedKey = normalizeGraphKey(seed);
+            if (seedKey == null) {
+                continue;
+            }
+
+            nodesByKey.putIfAbsent(
+                    seedKey,
+                    new LinkGraphNodeDto(
+                            seed,
+                            buildGraphLabel(seed, "seed", entitiesById),
+                            0,
+                            "seed"
+                    )
+            );
+            queue.addLast(new GraphFrontierNode(seed, 0));
+            if (preventCycles) {
+                visited.add(seedKey);
+            }
+        }
+
+        while (!queue.isEmpty()) {
+            GraphFrontierNode frontierNode = queue.removeFirst();
+            if (frontierNode.level() >= maxDepth) {
+                continue;
+            }
+
+            List<GraphNeighbor> neighbors = resolveGraphNeighbors(
+                    mode,
+                    sourceType,
+                    frontierNode.value(),
+                    sourceContainerId,
+                    effectiveSourceDataItemId,
+                    sourceVerificationId,
+                    entitiesById,
+                    recipientToObjectIds,
+                    referenceToObjectIds,
+                    objectToRecipients,
+                    objectToReferences
+            );
+
+            for (GraphNeighbor neighbor : neighbors) {
+                String fromKey = normalizeGraphKey(frontierNode.value());
+                String targetKey = normalizeGraphKey(neighbor.target());
+                if (fromKey == null || targetKey == null) {
+                    continue;
+                }
+
+                if (!nodesByKey.containsKey(targetKey)) {
+                    if (nodesByKey.size() >= maxNodes) {
+                        nodesTruncated = true;
+                        continue;
+                    }
+
+                    nodesByKey.put(
+                            targetKey,
+                            new LinkGraphNodeDto(
+                                    neighbor.target(),
+                                    buildGraphLabel(neighbor.target(), neighbor.kind(), entitiesById),
+                                    frontierNode.level() + 1,
+                                    neighbor.kind()
+                            )
+                    );
+                }
+
+                String edgeKey = fromKey + "->" + targetKey + ":" + neighbor.relation();
+                if (!edgesByKey.containsKey(edgeKey)) {
+                    if (edgesByKey.size() >= maxEdges) {
+                        edgesTruncated = true;
+                    } else {
+                        edgesByKey.put(
+                                edgeKey,
+                                new LinkGraphEdgeDto(
+                                        frontierNode.value(),
+                                        neighbor.target(),
+                                        neighbor.relation()
+                                )
+                        );
+                    }
+                }
+
+                if (frontierNode.level() + 1 > maxDepth) {
+                    continue;
+                }
+
+                if (preventCycles) {
+                    if (visited.add(targetKey)) {
+                        queue.addLast(new GraphFrontierNode(neighbor.target(), frontierNode.level() + 1));
+                    }
+                } else {
+                    queue.addLast(new GraphFrontierNode(neighbor.target(), frontierNode.level() + 1));
+                }
+            }
+        }
+
+        List<String> infoParts = new ArrayList<>();
+        if (edgesByKey.isEmpty()) {
+            infoParts.add("No linked values found.");
+        }
+        if (nodesTruncated) {
+            infoParts.add("Node limit reached (maxNodes=" + maxNodes + ").");
+        }
+        if (edgesTruncated) {
+            infoParts.add("Edge limit reached.");
+        }
+
+        String info = infoParts.isEmpty() ? null : String.join(" ", infoParts);
+        return new LinkGraphResponseDto(
+                new ArrayList<>(nodesByKey.values()),
+                new ArrayList<>(edgesByKey.values()),
+                info
+        );
+    }
+
+    private static void indexGraphLinks(
+            String objectId,
+            Collection<String> recipients,
+            Collection<String> references,
+            Map<String, List<String>> recipientToObjectIds,
+            Map<String, List<String>> referenceToObjectIds,
+            Map<String, List<String>> objectToRecipients,
+            Map<String, List<String>> objectToReferences
+    ) {
+        String objectKey = normalizeGraphKey(objectId);
+        if (objectKey == null) {
+            return;
+        }
+
+        for (String recipient : sanitizeGraphValues(recipients)) {
+            addGraphIndexValue(recipientToObjectIds, normalizeGraphKey(recipient), objectId);
+            addGraphIndexValue(objectToRecipients, objectKey, recipient);
+        }
+
+        for (String reference : sanitizeGraphValues(references)) {
+            addGraphIndexValue(referenceToObjectIds, normalizeGraphKey(reference), objectId);
+            addGraphIndexValue(objectToReferences, objectKey, reference);
+        }
+    }
+
+    private static List<GraphNeighbor> resolveGraphNeighbors(
+            LinkGraphMode mode,
+            LinkSourceType sourceType,
+            String currentValue,
+            String sourceContainerId,
+            String sourceDataItemId,
+            String sourceVerificationId,
+            Map<String, GraphEntityMetadata> entitiesById,
+            Map<String, List<String>> recipientToObjectIds,
+            Map<String, List<String>> referenceToObjectIds,
+            Map<String, List<String>> objectToRecipients,
+            Map<String, List<String>> objectToReferences
+    ) {
+        String currentKey = normalizeGraphKey(currentValue);
+        if (currentKey == null) {
+            return List.of();
+        }
+
+        Map<String, GraphNeighbor> neighbors = new LinkedHashMap<>();
+        GraphEntityMetadata currentEntity = entitiesById.get(currentKey);
+
+        if (mode == LinkGraphMode.RECIPIENTS) {
+            for (String objectId : recipientToObjectIds.getOrDefault(currentKey, List.of())) {
+                GraphEntityMetadata objectMetadata = entitiesById.get(normalizeGraphKey(objectId));
+                if (!matchesGraphScope(
+                        objectMetadata,
+                        sourceType,
+                        sourceContainerId,
+                        sourceDataItemId,
+                        sourceVerificationId
+                )) {
+                    continue;
+                }
+                addGraphNeighbor(
+                        neighbors,
+                        objectId,
+                        "recipient_of",
+                        objectMetadata.kind()
+                );
+            }
+
+            if (currentEntity != null && matchesGraphScope(
+                    currentEntity,
+                    sourceType,
+                    sourceContainerId,
+                    sourceDataItemId,
+                    sourceVerificationId
+            )) {
+                for (String recipient : objectToRecipients.getOrDefault(currentKey, List.of())) {
+                    addGraphNeighbor(neighbors, recipient, "has_recipient", "recipient");
+                }
+            }
+        } else {
+            if (currentEntity != null && matchesGraphScope(
+                    currentEntity,
+                    sourceType,
+                    sourceContainerId,
+                    sourceDataItemId,
+                    sourceVerificationId
+            )) {
+                for (String reference : objectToReferences.getOrDefault(currentKey, List.of())) {
+                    GraphEntityMetadata referenceMetadata = entitiesById.get(normalizeGraphKey(reference));
+                    String kind = referenceMetadata != null ? referenceMetadata.kind() : "reference";
+                    addGraphNeighbor(neighbors, reference, "references", kind);
+                }
+            }
+
+            for (String objectId : referenceToObjectIds.getOrDefault(currentKey, List.of())) {
+                GraphEntityMetadata objectMetadata = entitiesById.get(normalizeGraphKey(objectId));
+                if (!matchesGraphScope(
+                        objectMetadata,
+                        sourceType,
+                        sourceContainerId,
+                        sourceDataItemId,
+                        sourceVerificationId
+                )) {
+                    continue;
+                }
+                addGraphNeighbor(
+                        neighbors,
+                        objectId,
+                        "referenced_by",
+                        objectMetadata.kind()
+                );
+            }
+        }
+
+        return new ArrayList<>(neighbors.values());
+    }
+
+    private static boolean matchesGraphScope(
+            GraphEntityMetadata metadata,
+            LinkSourceType sourceType,
+            String sourceContainerId,
+            String sourceDataItemId,
+            String sourceVerificationId
+    ) {
+        if (metadata == null) {
+            return false;
+        }
+
+        if (sourceContainerId != null && !Objects.equals(sourceContainerId, metadata.containerId())) {
+            return false;
+        }
+
+        if (sourceDataItemId == null) {
+            return true;
+        }
+
+        if (sourceType == LinkSourceType.DATA_ITEM_VERIFICATION) {
+            if ("data_item".equals(metadata.kind())) {
+                return Objects.equals(sourceDataItemId, metadata.id());
+            }
+
+            if ("data_item_verification".equals(metadata.kind())) {
+                if (sourceVerificationId != null) {
+                    return Objects.equals(sourceVerificationId, metadata.id());
+                }
+                return Objects.equals(sourceDataItemId, metadata.dataItemId());
+            }
+
+            return true;
+        }
+
+        if ("data_item".equals(metadata.kind())) {
+            return Objects.equals(sourceDataItemId, metadata.id());
+        }
+
+        if ("data_item_verification".equals(metadata.kind())) {
+            return Objects.equals(sourceDataItemId, metadata.dataItemId());
+        }
+
+        return true;
+    }
+
+    private static void addGraphNeighbor(
+            Map<String, GraphNeighbor> neighbors,
+            String target,
+            String relation,
+            String kind
+    ) {
+        String targetKey = normalizeGraphKey(target);
+        if (targetKey == null) {
+            return;
+        }
+        String key = targetKey + ":" + relation;
+        neighbors.putIfAbsent(key, new GraphNeighbor(target, relation, kind));
+    }
+
+    private static void addGraphIndexValue(
+            Map<String, List<String>> index,
+            String key,
+            String value
+    ) {
+        if (key == null || value == null || value.isBlank()) {
+            return;
+        }
+        List<String> values = index.computeIfAbsent(key, ignored -> new ArrayList<>());
+        if (!values.contains(value)) {
+            values.add(value);
+        }
+    }
+
+    private static List<String> sanitizeGraphValues(Collection<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .map(NodeService::normalizeBlank)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private static LinkGraphMode parseLinkGraphMode(String rawMode) {
+        if (rawMode == null || rawMode.isBlank()) {
+            return LinkGraphMode.RECIPIENTS;
+        }
+
+        return "references".equalsIgnoreCase(rawMode.trim())
+                ? LinkGraphMode.REFERENCES
+                : LinkGraphMode.RECIPIENTS;
+    }
+
+    private static LinkSourceType parseLinkSourceType(String rawSourceType) {
+        if (rawSourceType == null || rawSourceType.isBlank()) {
+            return LinkSourceType.DATA_ITEM;
+        }
+
+        return "data_item_verification".equalsIgnoreCase(rawSourceType.trim())
+                ? LinkSourceType.DATA_ITEM_VERIFICATION
+                : LinkSourceType.DATA_ITEM;
+    }
+
+    private static int clamp(Integer value, int fallback, int min, int max) {
+        int base = value == null ? fallback : value;
+        return Math.max(min, Math.min(max, base));
+    }
+
+    private static String normalizeGraphKey(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        return trimmed.toLowerCase(Locale.ROOT);
+    }
+
+    private static String buildGraphLabel(
+            String id,
+            String kind,
+            Map<String, GraphEntityMetadata> entitiesById
+    ) {
+        String key = normalizeGraphKey(id);
+        GraphEntityMetadata metadata = key == null ? null : entitiesById.get(key);
+        if (metadata == null) {
+            return id;
+        }
+
+        String name = normalizeBlank(metadata.name());
+        if (name == null) {
+            return metadata.id();
+        }
+        return name + " (" + abbreviateObjectId(metadata.id()) + ")";
+    }
+
+    private static String abbreviateObjectId(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() <= 18) {
+            return trimmed;
+        }
+        return trimmed.substring(0, 8) + "…" + trimmed.substring(trimmed.length() - 8);
     }
 
     private static DataItemFilterOptions parseDataItemFilterOptions(
@@ -852,6 +1461,88 @@ public class NodeService {
             return false;
         }
         return "asc".equalsIgnoreCase(raw.trim());
+    }
+
+    private static RecipientScope parseRecipientScope(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return RecipientScope.ALL;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "mine", "received", "received_by_me" -> RecipientScope.MINE;
+            case "others", "received_by_others" -> RecipientScope.OTHERS;
+            case "with_recipients", "with-recipients", "has_recipients", "has-recipients" ->
+                    RecipientScope.WITH_RECIPIENTS;
+            default -> RecipientScope.ALL;
+        };
+    }
+
+    private static ContainerScope parseContainerScope(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return ContainerScope.ACCESSIBLE;
+        }
+
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "all", "global", "any" -> ContainerScope.ALL;
+            default -> ContainerScope.ACCESSIBLE;
+        };
+    }
+
+    private static String recipientScopeToApiValue(RecipientScope scope) {
+        if (scope == null) {
+            return "all";
+        }
+        return switch (scope) {
+            case MINE -> "mine";
+            case OTHERS -> "others";
+            case WITH_RECIPIENTS -> "with_recipients";
+            case ALL -> "all";
+        };
+    }
+
+    private static String containerScopeToApiValue(ContainerScope scope) {
+        if (scope == null) {
+            return "accessible";
+        }
+
+        return scope == ContainerScope.ALL ? "all" : "accessible";
+    }
+
+    private static boolean matchesRecipientScope(
+            List<String> recipients,
+            RecipientScope scope,
+            String recipientAddress
+    ) {
+        List<String> normalizedRecipients = recipients == null
+                ? List.of()
+                : recipients.stream()
+                        .filter(Objects::nonNull)
+                        .map(value -> value.trim().toLowerCase(Locale.ROOT))
+                        .filter(value -> !value.isBlank())
+                        .toList();
+
+        if (scope == null || scope == RecipientScope.ALL) {
+            return true;
+        }
+
+        if (scope == RecipientScope.WITH_RECIPIENTS) {
+            return !normalizedRecipients.isEmpty();
+        }
+
+        String normalizedAddress = normalizeText(recipientAddress);
+        if (normalizedAddress.isBlank()) {
+            return false;
+        }
+
+        boolean mine = normalizedRecipients.contains(normalizedAddress);
+        return switch (scope) {
+            case MINE -> mine;
+            case OTHERS -> !normalizedRecipients.isEmpty() && !mine;
+            case WITH_RECIPIENTS -> !normalizedRecipients.isEmpty();
+            case ALL -> true;
+        };
     }
 
     private static String toSearchFieldsCsv(EnumSet<DataItemSearchField> searchFields) {
@@ -1011,6 +1702,367 @@ public class NodeService {
         return value == null || value.isBlank() || "undefined".equals(value);
     }
 
+    private ContainerTreeDto getContainerTreeAcrossContainers(
+            String normalizedDataTypeId,
+            String normalizedDataItemId,
+            String normalizedDataItemVerificationId,
+            Boolean dataItemVerificationVerified,
+            RecipientScope normalizedDataItemRecipientScope,
+            RecipientScope normalizedDataItemVerificationRecipientScope,
+            String normalizedRecipientAddress,
+            DataItemFilterOptions dataItemFilters,
+            String normalizedDomain,
+            ContainerScope normalizedContainerScope,
+            String creatorAddr,
+            int page,
+            int pageSize,
+            EnumSet<ContainerTreeIncludeEnum> safeIncludes,
+            boolean includeDataItemVerifications
+    ) {
+        List<Container> scopedContainers = resolveContainerScope(
+                normalizedDomain,
+                normalizedContainerScope,
+                creatorAddr
+        );
+
+        Map<String, Container> containersById = scopedContainers.stream()
+                .filter(container -> container != null && container.getId() != null)
+                .collect(Collectors.toMap(
+                        Container::getId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        List<DataType> loadedDataTypes = new ArrayList<>();
+        if (normalizedDataTypeId != null) {
+            dataTypeRepository.findById(normalizedDataTypeId)
+                    .filter(dataType -> containersById.containsKey(dataType.getContainerId()))
+                    .filter(dataType ->
+                            normalizedDomain == null
+                                    || publishTargetRepository.findByDomainAndDataTypeId(
+                                            normalizedDomain,
+                                            dataType.getId()
+                                    ).isPresent()
+                    )
+                    .ifPresent(loadedDataTypes::add);
+        } else {
+            for (Container container : containersById.values()) {
+                List<DataType> containerDataTypes = normalizedDomain != null
+                        ? dataTypeRepository.findByContainerAndPublishTargetDomain(
+                                container.getId(),
+                                normalizedDomain
+                        )
+                        : dataTypeRepository.findByContainer(container.getId());
+                loadedDataTypes.addAll(containerDataTypes);
+            }
+        }
+
+        Map<String, DataType> dataTypesById = loadedDataTypes.stream()
+                .filter(dataType -> dataType != null && dataType.getId() != null)
+                .collect(Collectors.toMap(
+                        DataType::getId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        List<DataItem> candidateItems = new ArrayList<>();
+        if (normalizedDataItemId != null) {
+            dataItemRepository.findById(normalizedDataItemId)
+                    .filter(dataItem -> containersById.containsKey(dataItem.getContainerId()))
+                    .filter(dataItem ->
+                            normalizedDataTypeId == null
+                                    || dataTypesById.containsKey(dataItem.getDataTypeId())
+                    )
+                    .filter(dataItem ->
+                            normalizedDomain == null
+                                    || publishTargetRepository.findByDomainAndDataItemId(
+                                            normalizedDomain,
+                                            dataItem.getId()
+                                    ).isPresent()
+                    )
+                    .ifPresent(candidateItems::add);
+        } else if (!dataTypesById.isEmpty()) {
+            Map<String, List<String>> dataTypeIdsByContainer = dataTypesById.values().stream()
+                    .collect(Collectors.groupingBy(
+                            DataType::getContainerId,
+                            LinkedHashMap::new,
+                            Collectors.mapping(DataType::getId, Collectors.toList())
+                    ));
+
+            for (Map.Entry<String, List<String>> entry : dataTypeIdsByContainer.entrySet()) {
+                List<String> containerDataTypeIds = entry.getValue();
+                if (containerDataTypeIds == null || containerDataTypeIds.isEmpty()) {
+                    continue;
+                }
+
+                List<DataItem> itemsForContainer = dataItemRepository.findByContainerAndDataTypeIds(
+                        entry.getKey(),
+                        containerDataTypeIds
+                );
+
+                if (normalizedDomain != null) {
+                    itemsForContainer = itemsForContainer.stream()
+                            .filter(dataItem ->
+                                    publishTargetRepository.findByDomainAndDataItemId(
+                                            normalizedDomain,
+                                            dataItem.getId()
+                                    ).isPresent()
+                            )
+                            .toList();
+                }
+
+                candidateItems.addAll(itemsForContainer);
+            }
+        }
+
+        if (normalizedDataItemRecipientScope != RecipientScope.ALL) {
+            candidateItems = candidateItems.stream()
+                    .filter(item ->
+                            matchesRecipientScope(
+                                    item.getRecipients(),
+                                    normalizedDataItemRecipientScope,
+                                    normalizedRecipientAddress
+                            )
+                    )
+                    .toList();
+        }
+
+        List<String> candidateItemIds = candidateItems.stream()
+                .map(DataItem::getId)
+                .toList();
+        boolean needsVerifications =
+                includeDataItemVerifications
+                        || normalizedDataItemVerificationId != null
+                        || dataItemVerificationVerified != null
+                        || dataItemFilters.hasVerifications() != null;
+
+        List<DataItemVerification> filteredDataItemVerifications =
+                needsVerifications && !candidateItemIds.isEmpty()
+                        ? dataItemVerificationRepository.findByDataItemIdIn(candidateItemIds)
+                        : List.of();
+
+        if (normalizedDataItemVerificationId != null) {
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
+                    .filter(verification -> normalizedDataItemVerificationId.equals(verification.getId()))
+                    .toList();
+        }
+
+        if (dataItemVerificationVerified != null) {
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
+                    .filter(verification -> Objects.equals(dataItemVerificationVerified, verification.getVerified()))
+                    .toList();
+        }
+
+        if (normalizedDataItemVerificationRecipientScope != RecipientScope.ALL) {
+            filteredDataItemVerifications = filteredDataItemVerifications.stream()
+                    .filter(verification ->
+                            matchesRecipientScope(
+                                    verification.getRecipients(),
+                                    normalizedDataItemVerificationRecipientScope,
+                                    normalizedRecipientAddress
+                            )
+                    )
+                    .toList();
+        }
+
+        Map<String, List<DataItemVerification>> dataItemVerificationsByItemId =
+                filteredDataItemVerifications.stream()
+                        .collect(Collectors.groupingBy(DataItemVerification::getDataItemId));
+
+        boolean dataItemVerificationFiltered =
+                normalizedDataItemVerificationId != null
+                        || dataItemVerificationVerified != null
+                        || normalizedDataItemVerificationRecipientScope != RecipientScope.ALL;
+
+        Map<String, DataItemRevisionDto> revisionDtoCache = new HashMap<>();
+        Function<DataItem, DataItemRevisionDto> revisionResolver =
+                dataItem -> revisionDtoCache.computeIfAbsent(
+                        dataItem.getId(),
+                        ignored -> buildRevisionDto(dataItem)
+                );
+
+        List<DataItem> filteredItems = candidateItems.stream()
+                .filter(dataItem ->
+                        !dataItemVerificationFiltered
+                                || !dataItemVerificationsByItemId
+                                        .getOrDefault(dataItem.getId(), List.of())
+                                        .isEmpty()
+                )
+                .filter(dataItem -> matchesDataItemFilters(
+                        dataItem,
+                        dataTypesById,
+                        dataItemVerificationsByItemId,
+                        revisionResolver,
+                        dataItemFilters
+                ))
+                .toList();
+
+        List<DataItem> orderedItems = sortDataItems(filteredItems, dataItemFilters);
+
+        long totalDataItems = orderedItems.size();
+        int totalPages = totalDataItems == 0 ? 0 : (int) Math.ceil((double) totalDataItems / pageSize);
+        int fromIndex = Math.min(page * pageSize, orderedItems.size());
+        int toIndex = Math.min(fromIndex + pageSize, orderedItems.size());
+        boolean hasNext = toIndex < orderedItems.size();
+        List<DataItem> pagedItems = orderedItems.subList(fromIndex, toIndex);
+
+        Map<String, List<DataItemVerification>> pagedVerificationsByItemId = includeDataItemVerifications
+                ? pagedItems.stream().map(DataItem::getId).collect(Collectors.toMap(
+                        Function.identity(),
+                        id -> dataItemVerificationsByItemId.getOrDefault(id, List.of()),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ))
+                : Map.of();
+
+        Map<String, List<DataItem>> pagedItemsByContainer = pagedItems.stream()
+                .collect(Collectors.groupingBy(
+                        DataItem::getContainerId,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        List<ContainerNodeDto> containerNodes = new ArrayList<>();
+        for (Container container : containersById.values()) {
+            List<DataItem> containerItems = pagedItemsByContainer.getOrDefault(container.getId(), List.of());
+            if (containerItems.isEmpty()) {
+                continue;
+            }
+
+            Map<String, List<DataItem>> itemsByTypeId = containerItems.stream()
+                    .collect(Collectors.groupingBy(
+                            DataItem::getDataTypeId,
+                            LinkedHashMap::new,
+                            Collectors.toList()
+                    ));
+
+            List<DataTypeNodeDto> typeNodes = new ArrayList<>();
+            for (Map.Entry<String, List<DataItem>> entry : itemsByTypeId.entrySet()) {
+                DataType dataType = dataTypesById.get(entry.getKey());
+                if (dataType == null) {
+                    continue;
+                }
+
+                List<DataItemNodeDto> itemDtos = entry.getValue().stream()
+                        .map(dataItem -> new DataItemNodeDto(
+                                dataItem,
+                                includeDataItemVerifications
+                                        ? pagedVerificationsByItemId.getOrDefault(dataItem.getId(), List.of())
+                                        : List.of(),
+                                revisionResolver.apply(dataItem)
+                        ))
+                        .toList();
+
+                typeNodes.add(new DataTypeNodeDto(dataType, itemDtos));
+            }
+
+            if (!typeNodes.isEmpty()) {
+                containerNodes.add(new ContainerNodeDto(container, typeNodes));
+            }
+        }
+
+        long returnedDataItemVerifications = containerNodes.stream()
+                .flatMap(containerNode -> containerNode.getDataTypes().stream())
+                .flatMap(typeNode -> typeNode.getDataItems().stream())
+                .mapToLong(itemNode -> itemNode.getDataItemVerifications().size())
+                .sum();
+
+        Map<String, Object> meta = buildMeta(
+                "data_item",
+                page,
+                pageSize,
+                safeIncludes,
+                null,
+                normalizedDataTypeId,
+                normalizedDataItemId,
+                normalizedDataItemVerificationId,
+                dataItemVerificationVerified,
+                recipientScopeToApiValue(normalizedDataItemRecipientScope),
+                recipientScopeToApiValue(normalizedDataItemVerificationRecipientScope),
+                normalizedRecipientAddress,
+                dataItemFilters.query(),
+                toSearchFieldsCsv(dataItemFilters.searchFields()),
+                dataItemFilters.verified(),
+                dataItemFilters.hasRevisions(),
+                dataItemFilters.hasVerifications(),
+                dataItemFilters.dataType(),
+                dataItemFilters.sortBy().name().toLowerCase(Locale.ROOT),
+                dataItemFilters.sortAscending() ? "asc" : "desc",
+                normalizedDomain,
+                containerScopeToApiValue(normalizedContainerScope),
+                containersById.size(),
+                containerNodes.size(),
+                dataTypesById.size(),
+                totalDataItems,
+                returnedDataItemVerifications,
+                totalPages,
+                hasNext,
+                false
+        );
+        meta.put("returnedDataItems", pagedItems.size());
+        meta.put(
+                "availableDataTypes",
+                dataTypesById.values().stream()
+                        .map(DataType::getName)
+                        .filter(Objects::nonNull)
+                        .map(String::trim)
+                        .filter(name -> !name.isEmpty())
+                        .distinct()
+                        .sorted(String.CASE_INSENSITIVE_ORDER)
+                        .toList()
+        );
+
+        return new ContainerTreeDto(containerNodes, meta);
+    }
+
+    private List<Container> resolveContainerScope(
+            String normalizedDomain,
+            ContainerScope requestedContainerScope,
+            String creatorAddr
+    ) {
+        ContainerScope effectiveScope =
+                requestedContainerScope == null ? ContainerScope.ACCESSIBLE : requestedContainerScope;
+
+        if (effectiveScope == ContainerScope.ALL) {
+            return normalizedDomain != null
+                    ? containerRepository.findByPublishTargetDomain(normalizedDomain)
+                    : containerRepository.findAll();
+        }
+
+        List<Container> accessibleContainers =
+                containerRepository.findAccessibleContainers(creatorAddr, Pageable.unpaged());
+
+        if (normalizedDomain == null || accessibleContainers.isEmpty()) {
+            return accessibleContainers;
+        }
+
+        List<String> accessibleContainerIds = accessibleContainers.stream()
+                .map(Container::getId)
+                .filter(Objects::nonNull)
+                .toList();
+
+        if (accessibleContainerIds.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> domainScopedContainerIds = publishTargetRepository
+                .findByDomainAndContainerIdIn(normalizedDomain, accessibleContainerIds)
+                .stream()
+                .map(target -> target.getContainerId())
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        if (domainScopedContainerIds.isEmpty()) {
+            return List.of();
+        }
+
+        return accessibleContainers.stream()
+                .filter(container -> domainScopedContainerIds.contains(container.getId()))
+                .toList();
+    }
+
     private List<DataType> resolveDataTypes(String containerId, String dataTypeId, String domain) {
         if (dataTypeId != null) {
             return dataTypeRepository.findByIdAndContainer(dataTypeId, containerId)
@@ -1073,8 +2125,12 @@ public class NodeService {
         }
 
         try {
+            ContentEncodingUtils.DecodedContent decodedContent =
+                    ContentEncodingUtils.decodeForProcessing(content);
+            String contentToParse = decodedContent.decoded() ? decodedContent.content() : content;
+
             Map<String, Object> contentMap = mapper.readValue(
-                    content,
+                    contentToParse,
                     new TypeReference<Map<String, Object>>() {}
             );
 
@@ -1178,6 +2234,9 @@ public class NodeService {
             String dataItemId,
             String dataItemVerificationId,
             Boolean dataItemVerificationVerified,
+            String dataItemRecipientScope,
+            String dataItemVerificationRecipientScope,
+            String recipientAddress,
             String dataItemQuery,
             String dataItemSearchFields,
             Boolean dataItemVerified,
@@ -1187,6 +2246,7 @@ public class NodeService {
             String dataItemSortBy,
             String dataItemSortDirection,
             String domain,
+            String containerScope,
             long totalContainers,
             long returnedContainers,
             long totalDataTypes,
@@ -1202,6 +2262,9 @@ public class NodeService {
         filters.put("dataItemId", dataItemId);
         filters.put("dataItemVerificationId", dataItemVerificationId);
         filters.put("dataItemVerificationVerified", dataItemVerificationVerified);
+        filters.put("dataItemRecipientScope", dataItemRecipientScope);
+        filters.put("dataItemVerificationRecipientScope", dataItemVerificationRecipientScope);
+        filters.put("recipientAddress", recipientAddress);
         filters.put("dataItemQuery", dataItemQuery);
         filters.put("dataItemSearchFields", dataItemSearchFields);
         filters.put("dataItemVerified", dataItemVerified);
@@ -1211,6 +2274,7 @@ public class NodeService {
         filters.put("dataItemSortBy", dataItemSortBy);
         filters.put("dataItemSortDirection", dataItemSortDirection);
         filters.put("domain", domain);
+        filters.put("containerScope", containerScope);
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("paginationLevel", paginationLevel);

@@ -2,6 +2,7 @@ package com.easypublish.parsed;
 
 import com.easypublish.entities.publish.PublishTarget;
 import com.easypublish.repositories.PublishTargetRepository;
+import com.easypublish.service.ContentEncodingUtils;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
@@ -27,10 +28,16 @@ public class EasyPublishParser {
         ObjectMapper mapper = new ObjectMapper();
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
+        ContentEncodingUtils.DecodedContent decodedContent = ContentEncodingUtils.decodeForProcessing(json);
+        if (decodedContent.encoded() && !decodedContent.decoded()) {
+            System.err.println("[WARN] EPZIP decode failed for objectId " + objectId + ": " + decodedContent.error());
+        }
+
         EasyPublish easyPublish;
 
         try {
-            easyPublish = mapper.readValue(json, EasyPublish.class);
+            String jsonToParse = decodedContent.decoded() ? decodedContent.content() : json;
+            easyPublish = mapper.readValue(jsonToParse, EasyPublish.class);
         } catch (Exception e) {
             System.err.println("[WARN] JSON parsing failed for objectId " + objectId);
             System.err.println(e.getMessage());

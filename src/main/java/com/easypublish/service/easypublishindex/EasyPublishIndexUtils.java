@@ -1,5 +1,6 @@
 package com.easypublish.service.easypublishindex;
 
+import com.easypublish.service.ContentEncodingUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -38,7 +39,10 @@ public final class EasyPublishIndexUtils {
         }
 
         try {
-            Map<String, Object> root = mapper.readValue(content, new TypeReference<Map<String, Object>>() {
+            ContentEncodingUtils.DecodedContent decodedContent = ContentEncodingUtils.decodeForProcessing(content);
+            String contentToParse = decodedContent.decoded() ? decodedContent.content() : content;
+
+            Map<String, Object> root = mapper.readValue(contentToParse, new TypeReference<Map<String, Object>>() {
             });
             Object easyPublish = root.get("easy_publish");
             if (easyPublish == null) {

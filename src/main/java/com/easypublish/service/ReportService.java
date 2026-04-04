@@ -247,8 +247,12 @@ public class ReportService {
         }
 
         try {
+            ContentEncodingUtils.DecodedContent decodedContent =
+                    ContentEncodingUtils.decodeForProcessing(content);
+            String contentToParse = decodedContent.decoded() ? decodedContent.content() : content;
+
             Map<String, Object> contentMap = mapper.readValue(
-                    content,
+                    contentToParse,
                     new TypeReference<Map<String, Object>>() {}
             );
 
