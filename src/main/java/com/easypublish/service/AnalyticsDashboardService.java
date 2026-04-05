@@ -46,6 +46,9 @@ public class AnalyticsDashboardService {
     private static final int DEFAULT_TOP_N = 8;
     private static final int MIN_TOP_N = 1;
     private static final int MAX_TOP_N = 25;
+    private static final int DEFAULT_GRAPH_LIMIT = 100;
+    private static final int MIN_GRAPH_LIMIT = 1;
+    private static final int MAX_GRAPH_LIMIT = 300;
 
     private static final DateTimeFormatter ISO_DATE = DateTimeFormatter.ISO_LOCAL_DATE;
     private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("yyyy-MM");
@@ -102,7 +105,8 @@ public class AnalyticsDashboardService {
             String dataTypeIdRaw,
             String drilldownDimensionRaw,
             String drilldownKeyRaw,
-            String domainRaw
+            String domainRaw,
+            Integer graphLimitRaw
     ) {
         String user = normalizeBlank(userAddress);
         if (user == null) {
@@ -112,6 +116,7 @@ public class AnalyticsDashboardService {
         Granularity granularity = parseGranularity(granularityRaw);
         ZoneId zoneId = parseZoneId(timezoneRaw);
         int topN = clampTopN(topNRaw);
+        int graphLimit = clampGraphLimit(graphLimitRaw);
 
         LocalDate from = parseIsoDateOrNull(fromRaw, "from");
         LocalDate to = parseIsoDateOrNull(toRaw, "to");
@@ -297,6 +302,16 @@ public class AnalyticsDashboardService {
         topAddresses.put("dataItems", buildTopAddresses(scopedDataItems, true, topN));
         topAddresses.put("verifications", buildTopAddresses(scopedVerifications, false, topN));
         response.put("topAddresses", topAddresses);
+        response.put(
+                "latestPublishedGraph",
+                buildLatestPublishedGraph(
+                        containersById,
+                        loadedDataTypes,
+                        scopedDataItems,
+                        scopedVerifications,
+                        graphLimit
+                )
+        );
 
         Map<String, Object> drilldown = buildDrilldown(
                 drilldownDimension,
@@ -736,6 +751,248 @@ public class AnalyticsDashboardService {
                 .toList();
     }
 
+    private Map<String, Object> buildLatestPublishedGraph(
+            Map<String, Container> containersById,
+            List<DataType> dataTypes,
+            List<DataItem> scopedDataItems,
+            List<DataItemVerification> scopedVerifications,
+            int graphLimit
+    ) {
+        List<DataItem> latestItems = scopedDataItems.stream()
+                .sorted(AnalyticsDashboardService::compareDataItemsByRecency)
+                .limit(graphLimit)
+                .toList();
+
+        Map<String, DataType> dataTypesById = dataTypes.stream()
+                .filter(dataType -> normalizeBlank(dataType.getId()) != null)
+                .collect(Collectors.toMap(
+                        DataType::getId,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+
+        Map<String, List<DataItemVerification>> verificationsByItemId = scopedVerifications.stream()
+                .filter(verification -> normalizeBlank(verification.getDataItemId()) != null)
+                .collect(Collectors.groupingBy(
+                        verification -> normalizeBlank(verification.getDataItemId()),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        Map<String, Map<String, Object>> nodesById = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> edgesById = new LinkedHashMap<>();
+
+        for (DataItem dataItem : latestItems) {
+            String dataItemId = normalizeBlank(dataItem.getId());
+            if (dataItemId == null) {
+                continue;
+            }
+
+            String containerId = normalizeBlank(dataItem.getContainerId());
+            String dataTypeId = normalizeBlank(dataItem.getDataTypeId());
+            Container container = containerId == null ? null : containersById.get(containerId);
+            DataType dataType = dataTypeId == null ? null : dataTypesById.get(dataTypeId);
+
+            if (containerId != null) {
+                addLatestGraphNode(
+                        nodesById,
+                        containerId,
+                        buildGraphNodeLabel(container == null ? null : container.getName(), containerId),
+                        0,
+                        "container"
+                );
+            }
+
+            if (dataTypeId != null) {
+                addLatestGraphNode(
+                        nodesById,
+                        dataTypeId,
+                        buildGraphNodeLabel(dataType == null ? null : dataType.getName(), dataTypeId),
+                        1,
+                        "data_type"
+                );
+            }
+
+            addLatestGraphNode(
+                    nodesById,
+                    dataItemId,
+                    buildGraphNodeLabel(dataItem.getName(), dataItemId),
+                    2,
+                    "data_item"
+            );
+
+            if (containerId != null && dataTypeId != null) {
+                addLatestGraphEdge(edgesById, containerId, dataTypeId, "contains_type");
+            }
+
+            if (dataTypeId != null) {
+                addLatestGraphEdge(edgesById, dataTypeId, dataItemId, "contains_item");
+            }
+
+            for (DataItemVerification verification : verificationsByItemId.getOrDefault(dataItemId, List.of())) {
+                String verificationId = normalizeBlank(verification.getId());
+                if (verificationId == null) {
+                    continue;
+                }
+
+                addLatestGraphNode(
+                        nodesById,
+                        verificationId,
+                        buildGraphNodeLabel(verification.getName(), verificationId),
+                        3,
+                        "data_item_verification"
+                );
+                addLatestGraphEdge(edgesById, dataItemId, verificationId, "has_verification");
+            }
+        }
+
+        long containerCount = countLatestGraphNodesByKind(nodesById, "container");
+        long typeCount = countLatestGraphNodesByKind(nodesById, "data_type");
+        long itemCount = countLatestGraphNodesByKind(nodesById, "data_item");
+        long verificationCount = countLatestGraphNodesByKind(nodesById, "data_item_verification");
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("containers", containerCount);
+        summary.put("dataTypes", typeCount);
+        summary.put("dataItems", itemCount);
+        summary.put("verifications", verificationCount);
+
+        List<String> infoParts = new ArrayList<>();
+        if (latestItems.isEmpty()) {
+            infoParts.add("No published items in selected scope and date range.");
+        } else if (scopedDataItems.size() > latestItems.size()) {
+            infoParts.add("Showing latest " + latestItems.size() + " of " + scopedDataItems.size() + " items.");
+        }
+        if (!latestItems.isEmpty() && verificationCount == 0) {
+            infoParts.add("No linked verifications found for this latest-item window.");
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("limit", graphLimit);
+        payload.put("windowDataItems", latestItems.size());
+        payload.put("totalScopedDataItems", scopedDataItems.size());
+        payload.put("nodes", new ArrayList<>(nodesById.values()));
+        payload.put("edges", new ArrayList<>(edgesById.values()));
+        payload.put("summary", summary);
+        if (!infoParts.isEmpty()) {
+            payload.put("info", String.join(" ", infoParts));
+        }
+        return payload;
+    }
+
+    private static void addLatestGraphNode(
+            Map<String, Map<String, Object>> nodesById,
+            String nodeIdRaw,
+            String labelRaw,
+            int level,
+            String kind
+    ) {
+        String nodeId = normalizeBlank(nodeIdRaw);
+        if (nodeId == null) {
+            return;
+        }
+
+        String nodeKey = nodeId.toLowerCase(Locale.ROOT);
+        if (nodesById.containsKey(nodeKey)) {
+            return;
+        }
+
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("id", nodeId);
+        node.put("label", normalizeBlank(labelRaw) == null ? nodeId : labelRaw.trim());
+        node.put("level", level);
+        node.put("kind", kind);
+        nodesById.put(nodeKey, node);
+    }
+
+    private static void addLatestGraphEdge(
+            Map<String, Map<String, Object>> edgesById,
+            String fromRaw,
+            String toRaw,
+            String relationRaw
+    ) {
+        String from = normalizeBlank(fromRaw);
+        String to = normalizeBlank(toRaw);
+        String relation = normalizeBlank(relationRaw);
+        if (from == null || to == null || relation == null) {
+            return;
+        }
+
+        String edgeKey = from.toLowerCase(Locale.ROOT) + "->" + to.toLowerCase(Locale.ROOT) + ":" + relation;
+        if (edgesById.containsKey(edgeKey)) {
+            return;
+        }
+
+        Map<String, Object> edge = new LinkedHashMap<>();
+        edge.put("from", from);
+        edge.put("to", to);
+        edge.put("relation", relation);
+        edgesById.put(edgeKey, edge);
+    }
+
+    private static long countLatestGraphNodesByKind(
+            Map<String, Map<String, Object>> nodesById,
+            String kind
+    ) {
+        return nodesById.values().stream()
+                .filter(node -> Objects.equals(kind, node.get("kind")))
+                .count();
+    }
+
+    private static String buildGraphNodeLabel(String nameRaw, String id) {
+        String name = normalizeBlank(nameRaw);
+        if (name == null) {
+            return id;
+        }
+        return name + " (" + abbreviateObjectId(id) + ")";
+    }
+
+    private static int compareDataItemsByRecency(DataItem left, DataItem right) {
+        Long leftEpochMs = extractCreatorTimestampMs(left.getCreator());
+        Long rightEpochMs = extractCreatorTimestampMs(right.getCreator());
+        long leftTimestamp = leftEpochMs == null ? Long.MIN_VALUE : leftEpochMs;
+        long rightTimestamp = rightEpochMs == null ? Long.MIN_VALUE : rightEpochMs;
+
+        int byTimestamp = Long.compare(rightTimestamp, leftTimestamp);
+        if (byTimestamp != 0) {
+            return byTimestamp;
+        }
+
+        int bySequence = compareBigIntegerDesc(left.getSequenceIndex(), right.getSequenceIndex());
+        if (bySequence != 0) {
+            return bySequence;
+        }
+
+        int byExternalIndex = compareBigIntegerDesc(left.getExternalIndex(), right.getExternalIndex());
+        if (byExternalIndex != 0) {
+            return byExternalIndex;
+        }
+
+        return Objects.toString(left.getId(), "").compareToIgnoreCase(Objects.toString(right.getId(), ""));
+    }
+
+    private static int compareBigIntegerDesc(BigInteger left, BigInteger right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return 1;
+        }
+        if (right == null) {
+            return -1;
+        }
+        return right.compareTo(left);
+    }
+
+    private static String abbreviateObjectId(String value) {
+        String normalized = normalizeBlank(value);
+        if (normalized == null || normalized.length() <= 18) {
+            return normalized == null ? "" : normalized;
+        }
+        return normalized.substring(0, 8) + "..." + normalized.substring(normalized.length() - 8);
+    }
+
     private static Set<String> collectActiveAddresses(
             List<DataItem> dataItems,
             List<DataItemVerification> verifications
@@ -839,7 +1096,7 @@ public class AnalyticsDashboardService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
-    private static LocalDate extractCreatorDate(Creator creator, ZoneId zoneId) {
+    private static Long extractCreatorTimestampMs(Creator creator) {
         if (creator == null) {
             return null;
         }
@@ -850,6 +1107,15 @@ public class AnalyticsDashboardService {
         }
 
         if (epochMs == null || epochMs <= 0) {
+            return null;
+        }
+
+        return epochMs;
+    }
+
+    private static LocalDate extractCreatorDate(Creator creator, ZoneId zoneId) {
+        Long epochMs = extractCreatorTimestampMs(creator);
+        if (epochMs == null) {
             return null;
         }
 
@@ -950,6 +1216,13 @@ public class AnalyticsDashboardService {
             return DEFAULT_TOP_N;
         }
         return Math.max(MIN_TOP_N, Math.min(MAX_TOP_N, rawTopN));
+    }
+
+    private static int clampGraphLimit(Integer rawGraphLimit) {
+        if (rawGraphLimit == null) {
+            return DEFAULT_GRAPH_LIMIT;
+        }
+        return Math.max(MIN_GRAPH_LIMIT, Math.min(MAX_GRAPH_LIMIT, rawGraphLimit));
     }
 
     private static String normalizeBlank(String value) {

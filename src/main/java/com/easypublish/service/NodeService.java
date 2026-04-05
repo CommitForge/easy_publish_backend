@@ -260,6 +260,7 @@ public class NodeService {
     private final String iotaRpcUrls;
     private final int iotaRpcAttemptsPerUrl;
     private final int iotaRpcRetryDelayMs;
+    private final String nodeCliDirectory;
 
     public NodeService(
             UserDataRepository userRepository,
@@ -279,7 +280,8 @@ public class NodeService {
             @Value("${app.iota.network:testnet}") String iotaNetwork,
             @Value("${app.iota.rpc-urls:}") String iotaRpcUrls,
             @Value("${app.iota.rpc-attempts-per-url:2}") int iotaRpcAttemptsPerUrl,
-            @Value("${app.iota.rpc-retry-delay-ms:400}") int iotaRpcRetryDelayMs
+            @Value("${app.iota.rpc-retry-delay-ms:400}") int iotaRpcRetryDelayMs,
+            @Value("${app.node.cli-dir:}") String nodeCliDirectory
     ) {
         this.userRepository = userRepository;
         this.mapper = mapper;
@@ -299,6 +301,7 @@ public class NodeService {
         this.iotaRpcUrls = iotaRpcUrls;
         this.iotaRpcAttemptsPerUrl = iotaRpcAttemptsPerUrl;
         this.iotaRpcRetryDelayMs = iotaRpcRetryDelayMs;
+        this.nodeCliDirectory = nodeCliDirectory;
     }
 
     /**
@@ -362,6 +365,9 @@ public class NodeService {
         }
         if (iotaRpcRetryDelayMs >= 0) {
             pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+        }
+        if (normalizeBlank(nodeCliDirectory) != null) {
+            pb.environment().put("EASY_PUBLISH_CLI_DIR", nodeCliDirectory.trim());
         }
 
         Process process = pb.start();

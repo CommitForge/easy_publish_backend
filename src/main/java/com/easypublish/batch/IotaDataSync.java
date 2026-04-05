@@ -77,6 +77,9 @@ public class IotaDataSync {
     @Value("${app.iota.node-fetch-retry-delay-ms:1000}")
     private long nodeFetchRetryDelayMs;
 
+    @Value("${app.node.cli-dir:}")
+    private String nodeCliDirectory;
+
     // ----------------------------
     // Fetch data via Node.js script (safe JSON parsing)
     // ----------------------------
@@ -116,6 +119,9 @@ public class IotaDataSync {
             }
             if (iotaRpcRetryDelayMs >= 0) {
                 pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+            }
+            if (nodeCliDirectory != null && !nodeCliDirectory.isBlank()) {
+                pb.environment().put("EASY_PUBLISH_CLI_DIR", nodeCliDirectory.trim());
             }
 
             Process process = pb.start();

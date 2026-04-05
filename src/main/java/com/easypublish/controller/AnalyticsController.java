@@ -34,7 +34,8 @@ public class AnalyticsController {
             @RequestParam(required = false) String dataTypeId,
             @RequestParam(required = false) String drilldownDimension,
             @RequestParam(required = false) String drilldownKey,
-            @RequestParam(required = false) String domain
+            @RequestParam(required = false) String domain,
+            @RequestParam(required = false) Integer graphLimit
     ) {
         if (domain != null && domain.equals(defaultPublicDomain)) {
             domain = null;
@@ -51,7 +52,8 @@ public class AnalyticsController {
                 dataTypeId,
                 drilldownDimension,
                 drilldownKey,
-                domain
+                domain,
+                graphLimit
         );
     }
 }

@@ -39,6 +39,9 @@ public class BlockEmitterIndexer {
     @Value("${app.iota.rpc-retry-delay-ms:400}")
     private int iotaRpcRetryDelayMs;
 
+    @Value("${app.node.cli-dir:}")
+    private String nodeCliDirectory;
+
     // ----------------------------
     // JSON helpers
     // ----------------------------
@@ -654,6 +657,9 @@ public class BlockEmitterIndexer {
         }
         if (iotaRpcRetryDelayMs >= 0) {
             pb.environment().put("IOTA_RPC_RETRY_DELAY_MS", String.valueOf(iotaRpcRetryDelayMs));
+        }
+        if (nodeCliDirectory != null && !nodeCliDirectory.isBlank()) {
+            pb.environment().put("EASY_PUBLISH_CLI_DIR", nodeCliDirectory.trim());
         }
 
         Process process = pb.start();
