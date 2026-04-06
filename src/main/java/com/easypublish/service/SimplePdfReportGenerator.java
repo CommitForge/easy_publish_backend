@@ -69,6 +69,21 @@ public final class SimplePdfReportGenerator {
         return buildPdf(pageStreams);
     }
 
+    public static byte[] generateTextReport(String title, List<String> bodyLines) {
+        List<String> lines = new ArrayList<>();
+        lines.add(safe(title));
+        lines.add("");
+        if (bodyLines != null && !bodyLines.isEmpty()) {
+            for (String line : bodyLines) {
+                lines.add(safe(line));
+            }
+        } else {
+            lines.add("No rows found for this report.");
+        }
+        List<String> pageStreams = buildPageStreams(lines);
+        return buildPdf(pageStreams);
+    }
+
     private static List<String> buildPageStreams(List<String> lines) {
         List<String> streams = new ArrayList<>();
         int totalPages = Math.max(1, (int) Math.ceil(lines.size() / (double) MAX_LINES_PER_PAGE));

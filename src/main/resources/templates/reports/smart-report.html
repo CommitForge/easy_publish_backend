@@ -1,0 +1,291 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <meta charset="UTF-8"/>
+    <title>Smart Report</title>
+
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12px;
+            color: #333;
+            margin: 20px;
+        }
+
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            border-bottom: 2px solid #333;
+            padding-bottom: 6px;
+            margin-bottom: 12px;
+        }
+
+        .header-left {
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .header-right {
+            text-align: right;
+            vertical-align: top;
+            width: 120px;
+        }
+
+        .header-right img {
+            max-width: 100px;
+        }
+
+        h1 {
+            font-size: 20px;
+            margin: 0;
+        }
+
+        .meta {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .info {
+            margin-top: 10px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        .notice {
+            border: 1px solid #d8d8d8;
+            background: #f6f6f6;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+        }
+
+        .warning {
+            border-color: #f0b2b2;
+            background: #fff0f0;
+        }
+
+        .section-title {
+            margin-top: 14px;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .empty-note {
+            color: #666;
+            font-style: italic;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            border-bottom: 2px solid #444;
+            padding: 6px;
+            font-size: 12px;
+        }
+
+        td {
+            border-bottom: 1px solid #ddd;
+            padding: 6px;
+            font-size: 11px;
+            vertical-align: top;
+            word-break: break-word;
+        }
+
+        tbody tr:nth-child(even) {
+            background: #f8f8f8;
+        }
+
+        .kv-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .kv-table th {
+            width: 190px;
+            border-bottom: 1px solid #ddd;
+            font-weight: 600;
+            color: #444;
+            background: #fafafa;
+        }
+
+        @page {
+            size: A4 landscape;
+            margin: 20mm 15mm;
+
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 10px;
+                color: #777;
+            }
+        }
+
+        thead {
+            display: table-header-group;
+        }
+
+        tr {
+            page-break-inside: avoid;
+        }
+    </style>
+
+</head>
+
+<body>
+
+<table class="header-table">
+    <tr>
+        <td class="header-left">
+            <h1>Smart Report</h1>
+            <div class="meta">
+                <div th:text="'Generated: ' + ${generatedAt}"></div>
+                <div th:text="'Scope: ' + ${reportScope}"></div>
+                <div>
+                    <span th:text="${idLabel}"></span>:
+                    <span th:text="${reportId}"></span>
+                </div>
+            </div>
+        </td>
+
+        <td class="header-right">
+            <img th:if="${logoPath != null}" th:src="${logoPath}" alt="Logo"/>
+        </td>
+    </tr>
+</table>
+
+<div class="info">
+    <div class="notice" th:text="${limitNote}"></div>
+    <div class="notice warning" th:if="${truncated}" th:text="${truncationMessage}"></div>
+    <div class="notice" th:if="${filterSummary != null}" th:text="'Applied Filters: ' + ${filterSummary}"></div>
+    <div>
+        <strong>Rows in report:</strong>
+        <span th:text="${displayedRecords}"></span>
+        /
+        <span th:text="${totalRecords}"></span>
+    </div>
+</div>
+
+<div th:if="${scopeKey == 'container'}">
+    <div class="section-title">Data Types In Selected Container</div>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Type Name</th>
+            <th>Type ID</th>
+            <th>Description</th>
+            <th>External ID</th>
+            <th>Creator</th>
+            <th>Created On-chain</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:if="${#lists.isEmpty(typeRows)}">
+            <td colspan="7" class="empty-note">No data type rows found for this container.</td>
+        </tr>
+        <tr th:each="row : ${typeRows}">
+            <td th:text="${row.index}"></td>
+            <td th:text="${row.dataTypeName}"></td>
+            <td th:text="${row.dataTypeId}"></td>
+            <td th:text="${row.description}"></td>
+            <td th:text="${row.externalId}"></td>
+            <td th:text="${row.creatorAddr}"></td>
+            <td th:text="${row.createdOnChain}"></td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div th:if="${scopeKey == 'data_type'}">
+    <div class="section-title">Data Items In Selected Data Type</div>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Item Name</th>
+            <th>Item ID</th>
+            <th>Verified</th>
+            <th>Verifications</th>
+            <th>External ID</th>
+            <th>External Index</th>
+            <th>Creator</th>
+            <th>Description</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:if="${#lists.isEmpty(itemRows)}">
+            <td colspan="9" class="empty-note">No data item rows found for this data type and filter.</td>
+        </tr>
+        <tr th:each="row : ${itemRows}">
+            <td th:text="${row.index}"></td>
+            <td th:text="${row.dataItemName}"></td>
+            <td th:text="${row.dataItemId}"></td>
+            <td th:text="${row.verified}"></td>
+            <td th:text="${row.verificationCount}"></td>
+            <td th:text="${row.externalId}"></td>
+            <td th:text="${row.externalIndex}"></td>
+            <td th:text="${row.creatorAddr}"></td>
+            <td th:text="${row.description}"></td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+<div th:if="${scopeKey == 'data_item'}">
+    <div class="section-title">Selected Data Item</div>
+    <table class="kv-table" th:if="${selectedItemSummary != null}">
+        <tbody>
+        <tr><th>Container</th><td th:text="${selectedItemSummary.containerName + ' (' + selectedItemSummary.containerId + ')'}">-</td></tr>
+        <tr><th>Data Type</th><td th:text="${selectedItemSummary.dataTypeName + ' (' + selectedItemSummary.dataTypeId + ')'}">-</td></tr>
+        <tr><th>Item</th><td th:text="${selectedItemSummary.dataItemName + ' (' + selectedItemSummary.dataItemId + ')'}">-</td></tr>
+        <tr><th>Verified</th><td th:text="${selectedItemSummary.verified}">-</td></tr>
+        <tr><th>External ID</th><td th:text="${selectedItemSummary.externalId}">-</td></tr>
+        <tr><th>External Index</th><td th:text="${selectedItemSummary.externalIndex}">-</td></tr>
+        <tr><th>Creator</th><td th:text="${selectedItemSummary.creatorAddr}">-</td></tr>
+        <tr><th>Created On-chain</th><td th:text="${selectedItemSummary.createdOnChain}">-</td></tr>
+        <tr><th>Content Preview</th><td th:text="${selectedItemSummary.contentPreview}">-</td></tr>
+        </tbody>
+    </table>
+
+    <div class="empty-note" th:if="${selectedItemSummary == null}">Data item details were not found for the selected context.</div>
+
+    <div class="section-title">Item Verifications</div>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Verification ID</th>
+            <th>Name</th>
+            <th>Verified</th>
+            <th>Creator</th>
+            <th>External ID</th>
+            <th>Description</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:if="${#lists.isEmpty(verificationRows)}">
+            <td colspan="7" class="empty-note">No item verifications found.</td>
+        </tr>
+        <tr th:each="row : ${verificationRows}">
+            <td th:text="${row.index}"></td>
+            <td th:text="${row.verificationId}"></td>
+            <td th:text="${row.name}"></td>
+            <td th:text="${row.verified}"></td>
+            <td th:text="${row.creatorAddr}"></td>
+            <td th:text="${row.externalId}"></td>
+            <td th:text="${row.description}"></td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+</body>
+</html>

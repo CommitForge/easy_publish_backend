@@ -1,5 +1,6 @@
 package com.easypublish.controller;
 
+import com.easypublish.service.NodeService;
 import com.easypublish.service.ReportService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -26,9 +27,11 @@ class ReportControllerNativePdfTest {
         try {
             ReportService reportService = Mockito.mock(ReportService.class);
             TemplateEngine templateEngine = Mockito.mock(TemplateEngine.class);
-            when(reportService.getCarMaintenancesByType("dt-native")).thenReturn(List.of());
+            NodeService nodeService = Mockito.mock(NodeService.class);
+            when(reportService.getCarReportByType("dt-native"))
+                    .thenReturn(new ReportService.CarReportPayload(List.of(), List.of()));
 
-            ReportController controller = new ReportController(reportService, templateEngine);
+            ReportController controller = new ReportController(reportService, templateEngine, nodeService, 1000);
             var response = controller.generateCarReport(null, "dt-native");
 
             assertEquals(MediaType.APPLICATION_PDF, response.getHeaders().getContentType());
@@ -39,8 +42,8 @@ class ReportControllerNativePdfTest {
                     new String(response.getBody(), 0, 5, StandardCharsets.US_ASCII)
             );
 
-            verify(reportService).getCarMaintenancesByType("dt-native");
-            verifyNoInteractions(templateEngine);
+            verify(reportService).getCarReportByType("dt-native");
+            verifyNoInteractions(templateEngine, nodeService);
         } finally {
             if (previousImageCode == null) {
                 System.clearProperty("org.graalvm.nativeimage.imagecode");
